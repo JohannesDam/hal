@@ -1,6 +1,6 @@
 # HAL v0.2: status
 
-Where the build stands against [plan-v0.2.md](plan-v0.2.md): steps 1–4 are done; steps 5, 6 and 8 are built and wait for a live test; step 7 and step 9 are open. Each open item names what the plan asks and how to test it.
+Where the build stands against [plan-v0.2.md](plan-v0.2.md): steps 1–4 are done; steps 5–8 are built and wait for a live test; step 9 (a week on the laptop) is open. Each open item names what the plan asks and how to test it.
 
 ## Done
 
@@ -12,6 +12,7 @@ Where the build stands against [plan-v0.2.md](plan-v0.2.md): steps 1–4 are don
 | 4 | Blind listening test; Kokoro **am_michael** kept warm in a Python helper; house tone under the full haze; `"..."` → 700 ms silence; `tools/setup-voice.ps1`. Later the Piper voice **kestrin** (about 0.1 s per line), from this repository's release `voice-kestrin` |
 | 5 | Listening along, built (see step 5 below for what is tested) |
 | 6 | Host and dossier, built: counts, fact block, `/hal dossier`, reception, farewell, bookkeeping in the status line, Esc as hidden context |
+| 7 | The terminal as HAL's house, built: "◉ ···" until the line is said, the visitor log, his own words for the spinner, the duration line and the hint line |
 | 8 | Initiative, the microphone guard and the edge glow, built |
 
 Owner decisions recorded in the plan: voice am_michael (replaced by **kestrin**, a Piper voice the owner chose on 2026-11-18) · ceiling 3 · edge glow during a turn · farewell also after `/exit` · deaf during calls · Dutch and English speech recognition.
@@ -65,13 +66,14 @@ Owner decisions recorded in the plan: voice am_michael (replaced by **kestrin**,
 
 *Test:* start the next morning. Is what he says true? Is the dossier right?
 
-### Step 7: the terminal as HAL's house
+### Step 7: the terminal as HAL's house (built; live test open)
 
-- [ ] The ◉ line without spoilers: "◉ ···" in the chat, the dimmed text after the last spoken word (custom `AssistantMessage` rendering, `$.ui.invalidate`); the text at once when voice or haze fails; Ctrl+O shows the original.
+- [x] The ◉ line without spoilers: "◉ ···" in the chat while a turn runs and until the voice has said it (an `AssistantMessage` rewrite, redrawn through an atom); the words at once when the line is dropped, filtered or HAL may not speak, and within 30 s whatever happens. *Deviation:* the words come back plain, not dimmed (a text rewrite cannot dim one line). *Tested.*
 - [x] Subtitle per phrase in the haze (24 DIP, #EADBD6 at 85%), timed by each phrase's share of the letters.
-- [ ] Visitor log: prompts dimmed (#B8AEAA) with "14:02 · name"; rendering only, never the text.
-- [ ] Own words: spinner ("watching", "weighing", "remembering"), duration line "HAL · 3 s", hint line "HAL waits" / "HAL works · esc interrupts".
-- [ ] Document the Windows Terminal profile "HAL" (background #0A0606, text #CFC6C2, cursor #E5301C, selection #3A0E0B) in the README; the mod never changes it.
+- [x] Visitor log: your prompts dimmed (#B8AEAA) under "14:02 · name" (", spoken" for one HAL heard); rendering only, never the text. A prompt from before a reload has no time.
+- [x] Own words: the spinner says Watching (tools), Weighing (thinking) or Remembering (writing); the duration line "HAL · 3 s"; the hint line keeps the engine's own line (its pills and "esc to interrupt") and adds "· HAL waits" or "· HAL works", and "· HAL listens".
+- [x] The Windows Terminal profile "HAL" is documented in the README; the mod never changes it.
+- [x] *(leftover)* When an answer ends with a question and you stay silent, he looks straight at you after four seconds.
 
 *Test:* does the terminal feel like his space while everything stays readable?
 
@@ -91,6 +93,5 @@ Owner decisions recorded in the plan: voice am_michael (replaced by **kestrin**,
 
 ### Smaller leftovers
 
-- [ ] Look straight at you when you fall silent after HAL asked a question.
 - [ ] Render the final phrase at speed 0.85, if a listening test approves.
 - [ ] Try `prompt.context` for the character instead of resending it (a test must show user mods may use it).

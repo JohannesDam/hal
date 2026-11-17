@@ -27,6 +27,8 @@ import {
   DEFAULTS,
   HELP,
   OFF_NOTE,
+  SPOKEN,
+  cleanSpokenLine,
   describe,
   describeCheck,
   judgeLine,
@@ -56,6 +58,8 @@ const levelAtom = atom({ plugin: 'hal', key: 'level' } as const, 2 as HalLevel)
 const lineAtom = atom({ plugin: 'hal', key: 'line' } as const, '')
 const earsAtom = atom({ plugin: 'hal', key: 'ears' } as const, 'off')
 const saidAtom = atom({ plugin: 'hal', key: 'said' } as const, '')
+/** Counts up when a spoken line may be shown in the chat: the chat redraws it. */
+const revealAtom = atom({ plugin: 'hal', key: 'reveal' } as const, 0)
 /** The session this visit belongs to: a reload of the mod is not a new visit. */
 const visitAtom = atom({ plugin: 'hal', key: 'visit' } as const, '')
 
@@ -114,6 +118,13 @@ let farewellAt = -Infinity
 let isFarewellBusy = false
 /** One sharp detail from the notes, at most once per session. */
 let isDetailUsed = false
+
+// The terminal as HAL's house (step 7). A spoken line shows as "◉ ···" until it has been said.
+const pendingLines = new Set<string>()
+const revealedLines = new Set<string>()
+const sayLines = new Map<string, string>()
+/** When each prompt was sent, for the visitor log: rendering only, never the text. */
+const promptTimes = new Map<string, string>()
 
 // HAL's one process per PC (assets/hal-host.ps1). This session either owns it
 // (and reads its stdout) or another session does (then only the inbox is shared).
@@ -335,6 +346,8 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       isAway = false
       await setMood($, 'idle')
       lookAtYou()
+      await reveal($, sayLines.get(String(message.id)))
+      sayLines.delete(String(message.id))
       if (message.why === 'interrupted') {
         await touch($, v => ({ ...v, interrupted: v.interrupted + 1 }))
       }
@@ -342,6 +355,8 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
     case 'dropped':
       isAway = false
       await setMood($, 'idle')
+      await reveal($, sayLines.get(String(message.id)))
+      sayLines.delete(String(message.id))
       if (String(message.why).startsWith('typing')) {
         await touch($, v => ({ ...v, interrupted: v.interrupted + 1 }))
       }
@@ -472,6 +487,15 @@ async function showSaid($: $, text: string, ms: number) {
       }
     })().catch(() => undefined)
   }
+}
+
+/** The chat may show a spoken line now: said, dropped, or never to be said. */
+async function reveal($: $, line: string | undefined) {
+  if (line === undefined || !pendingLines.delete(line)) {
+    return
+  }
+  revealedLines.add(line)
+  await update($, revealAtom, n => n + 1)
 }
 
 /** The local date, for the dossier's tally of heard speech. */
@@ -793,12 +817,12 @@ type Weight =
   | 'line'
 
 /** HAL speaks: the line goes to HAL's process, which speaks it and, at real moments, lays the haze. */
-async function speak($: $, text: string, settings: HalSettings, weight: Weight, isUncomfortable: boolean) {
+async function speak($: $, text: string, settings: HalSettings, weight: Weight, isUncomfortable: boolean): Promise<boolean> {
   // Another app holds the microphone (a call): HAL does not speak aloud over it.
   if (desk.micBusy && weight !== 'test') {
     $.ui.log('hal: kept silent, another app holds the microphone', { to: 'debug' })
 
-    return
+    return false
   }
   const level = await currentLevel($, settings)
   let haze = false
@@ -812,15 +836,24 @@ async function speak($: $, text: string, settings: HalSettings, weight: Weight, 
   }
   await touch($, v => ({ ...v, spoken: v.spoken + 1 }))
   messageCount += 1
+  const id = `say-${messageCount}`
+  sayLines.set(id, text)
   await send($, {
     kind: 'say',
-    id: `say-${messageCount}`,
+    id,
     text: speakable(text),
     haze,
     strength: 0.4 + 0.08 * level,
     // Short for routine; two to three seconds of staring before something uncomfortable.
     pauseMs: isUncomfortable ? 2000 + Math.round(1000 * Math.random()) : 300,
   })
+  // Whatever happens to the voice, the chat shows the line within half a minute.
+  void (async () => {
+    await $.clock.sleep(30_000)
+    await reveal($, text)
+  })().catch(() => undefined)
+
+  return true
 }
 
 /** Rarely, at level 3: only the eye comes, looks, and goes. Not a word. */
@@ -1109,6 +1142,11 @@ export const register: Register = on => {
     }
     const now = await $.clock.now()
     watch = { ...watch, lastPromptAt: now, lastActivityAt: now }
+    const local = new Date(now + (utcOffsetMinutes ?? 0) * 60_000)
+    promptTimes.set(e.text, `${String(local.getUTCHours()).padStart(2, '0')}:${String(local.getUTCMinutes()).padStart(2, '0')}`)
+    if (promptTimes.size > 200) {
+      promptTimes.delete(promptTimes.keys().next().value ?? '')
+    }
     const ctx = await context($, settings)
     const note = hasSentPersona ? reminder(settings, ctx) : persona(settings, ctx)
     hasSentPersona = true
@@ -1194,6 +1232,11 @@ export const register: Register = on => {
       return done
     }
     const settings = await read($, settingsAtom)
+    // The spoken line stays "◉ ···" in the chat until the voice has said it.
+    const held = settings.isOn && e.reason === 'answer' ? lastSpokenLine(e.answer) : undefined
+    if (held) {
+      pendingLines.add(held)
+    }
     if (mood === 'working') {
       await setMood($, 'idle')
     }
@@ -1218,16 +1261,29 @@ export const register: Register = on => {
     if (isLateHour(hour)) {
       await shiftMood($, 'lateTurn')
     }
+    // He asked something and you stay silent: after four seconds he looks straight at you.
+    if (e.reason === 'answer' && /\?\s*$/.test(e.answer.trim().split(/\r?\n/).at(-1) ?? '')) {
+      const askedAt = clock
+      void (async () => {
+        await $.clock.sleep(4000)
+        if (lastEditAt < askedAt && mood === 'idle') {
+          lookAtYou(1800)
+        }
+      })().catch(() => undefined)
+    }
     if (settings.talk === 'never' || e.reason !== 'answer') {
+      await reveal($, held)
+
       return done
     }
     const level = await currentLevel($, settings)
-    const line = lastSpokenLine(e.answer)
+    const line = held
     const verdict = line ? judgeLine(line, { recent, name: settings.name, isNameUsed }) : undefined
     if (line && verdict && !verdict.isOk) {
       $.ui.log(`hal: kept silent, the line broke the style rules (${verdict.why}): ${line}`, { to: 'debug' })
     }
     if (!line || !verdict?.isOk) {
+      await reveal($, held)
       if (level === 3 && settings.haze && Math.random() < 0.12) {
         await stare($, settings)
       }
@@ -1237,7 +1293,9 @@ export const register: Register = on => {
     // A real moment gets the full haze: an error, after midnight, a job of more than two minutes.
     const isMoment = hadFailureThisTurn || hour < 5 || e.durationMs > 120_000
     await remember($, line, settings)
-    await speak($, line, settings, isMoment ? 'moment' : 'line', hadFailureThisTurn || level === 3)
+    if (!(await speak($, line, settings, isMoment ? 'moment' : 'line', hadFailureThisTurn || level === 3))) {
+      await reveal($, held)
+    }
 
     return done
   })
@@ -1267,15 +1325,90 @@ export const register: Register = on => {
     )
   })
 
-  // The hint line under the prompt says it while it is true.
+  // The hint line under the prompt: HAL waits, HAL works, HAL listens, each while it is true.
+  // A tail keeps the engine's own line (its pills and "esc to interrupt") as it is.
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     const settings = await read($, settingsAtom)
     const ears = await read($, earsAtom)
-    if (!settings.isOn || !settings.listen || ears !== 'listening') {
+    if (!settings.isOn) {
       return next(e)
     }
+    const listens = settings.listen && ears === 'listening' ? ' · HAL listens' : ''
 
-    return next({ ...e, props: { ...e.props, tail: ' · HAL listens' } })
+    return next({ ...e, props: { ...e.props, tail: `${e.props.isWorking ? ' · HAL works' : ' · HAL waits'}${listens}` } })
+  })
+
+  // His own words for the spinner.
+  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    const settings = await read($, settingsAtom)
+    if (!settings.isOn) {
+      return next(e)
+    }
+    const mode = e.props.mode
+    const word = mode === 'tool-use' || mode === 'tool-input' ? 'Watching' : mode === 'responding' ? 'Remembering' : 'Weighing'
+
+    return next({ ...e, props: { ...e.props, word } })
+  })
+
+  // The line that closes a turn: "HAL · 3 s".
+  on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
+    const settings = await read($, settingsAtom)
+    if (!settings.isOn || e.surface !== 'terminal' || e.props.isExpanded || e.props.waitingFor) {
+      return next(e)
+    }
+    const { Text } = $.ui.resolve(e)
+    const seconds = Math.max(0, Math.round(e.props.durationMs / 1000))
+    const length = seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`
+
+    return <Text dimColor>HAL · {length}</Text>
+  })
+
+  // The visitor log: your prompts, dimmed, with the time and your name. Only the drawing changes.
+  on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
+    const settings = await read($, settingsAtom)
+    const origin = e.props.origin
+    const isSpoken = origin.kind === 'plugin' && origin.name === 'hal'
+    if (!settings.isOn || e.surface !== 'terminal' || (origin.kind !== 'composer' && !isSpoken)) {
+      return next(e)
+    }
+    const { Box, Text } = $.ui.resolve(e)
+    const at = promptTimes.get(e.props.text)
+    const head = `${at ? `${at} · ` : ''}${settings.name || 'guest'}${isSpoken ? ' · spoken' : ''}`
+
+    return (
+      <Box flexDirection="column">
+        <Text color="#7f7572">{head}</Text>
+        <Text color="#b8aeaa">{e.props.text}</Text>
+      </Box>
+    )
+  })
+
+  // The spoken line without spoilers: "◉ ···" until the voice has said it; then the words.
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    const settings = await read($, settingsAtom)
+    await read($, revealAtom)
+    const now = await read($, moodAtom)
+    if (!settings.isOn || !e.props.text.includes('◉')) {
+      return next(e)
+    }
+    let isHidden = false
+    const text = e.props.text.replace(SPOKEN, (whole: string, lead: string, words: string) => {
+      const line = cleanSpokenLine(words)
+      if (line === undefined) {
+        return whole
+      }
+      // While a turn runs, a line nobody has seen yet is still being written: it waits too.
+      if (pendingLines.has(line) || (now === 'working' && !revealedLines.has(line))) {
+        isHidden = true
+
+        return `${lead}···`
+      }
+      revealedLines.add(line)
+
+      return whole
+    })
+
+    return isHidden ? next({ ...e, props: { ...e.props, text } }) : next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

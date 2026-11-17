@@ -71,6 +71,26 @@ HAL keeps notes per machine (`/hal dossier`): visits, how long, reads, edits, co
 - **Edge glow:** while a turn runs, a dark red gradient breathes along the screen edges (at most 9%); never during fullscreen.
 - Esc travels with your next prompt; he names it once. While another app holds the microphone, he does not speak aloud.
 
+## His house: the terminal
+
+While HAL is awake the terminal is his: the spinner says *Watching*, *Weighing* or *Remembering*; a turn ends with "HAL · 3 s"; the hint line adds "HAL waits" or "HAL works" (and "HAL listens"); your prompts show dimmed under the time and your name, like a visitors' book; and his spoken line stays "◉ ···" in the chat until his voice has said it. Only the drawing changes, never what is stored.
+
+Optionally, give Windows Terminal a profile "HAL" yourself (the mod never changes your settings). In `settings.json`, add a scheme and use it in a profile:
+
+```json
+"schemes": [{
+  "name": "HAL",
+  "background": "#0A0606", "foreground": "#CFC6C2",
+  "cursorColor": "#E5301C", "selectionBackground": "#3A0E0B",
+  "black": "#0A0606", "red": "#E5301C", "green": "#8FA58A", "yellow": "#C8A26B",
+  "blue": "#7D8FA6", "purple": "#9E7E9A", "cyan": "#7FA3A1", "white": "#CFC6C2",
+  "brightBlack": "#5A4E4C", "brightRed": "#FF5A1F", "brightGreen": "#A9C2A3", "brightYellow": "#E0BC85",
+  "brightBlue": "#9AACC2", "brightPurple": "#BA9AB6", "brightCyan": "#9CC0BE", "brightWhite": "#EADBD6"
+}]
+```
+
+and in the profile you start Claude Code from: `"colorScheme": "HAL"`.
+
 ## Listening along
 
 While HAL is awake he listens to a microphone and to what the computer plays (the loopback of the default output). Speech is cut out with Silero VAD and written down by multilingual Whisper (Dutch and English), **on this machine**; the words stay in memory for five minutes and are never written to disk. While HAL speaks, his ears are closed.

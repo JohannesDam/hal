@@ -29,6 +29,8 @@ declare module 'claude-code' {
       said: string
       /** The session id of the visit in progress: a reload is not a new visit. */
       visit: string
+      /** Counts up when a spoken line may be shown in the chat. */
+      reveal: number
     }
   }
 }

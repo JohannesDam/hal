@@ -139,12 +139,18 @@ export const OFF_NOTE =
 
 /** The last "◉ ..." line of an answer, cleaned; undefined when there is none. */
 export function lastSpokenLine(answer: string): string | undefined {
-  const lines = [...answer.matchAll(/^[ \t>*_]*◉\s*(.+)$/gm)]
-  const last = lines.at(-1)?.[1]
-  if (last === undefined) {
-    return undefined
-  }
-  const text = last
+  const lines = [...answer.matchAll(SPOKEN)]
+  const last = lines.at(-1)?.[2]
+
+  return last === undefined ? undefined : cleanSpokenLine(last)
+}
+
+/** A "◉ ..." line in an answer: the lead (bullet, quote marks, the eye) and the words. */
+export const SPOKEN = /^([ \t>*_]*◉\s*)(.+)$/gm
+
+/** The words of a spoken line as HAL says them: no markdown, no quotes around them. */
+export function cleanSpokenLine(words: string): string | undefined {
+  const text = words
     .replace(/[*_`#~]/g, '')
     .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
     .replace(/\s+/g, ' ')

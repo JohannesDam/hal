@@ -2,7 +2,14 @@ import { expect, mock, test } from 'claude-code/testing'
 
 // Nothing sits beneath the plugin: each hook here stands for the engine.
 // `sent` collects what the mod writes into HAL's inbox.
-function engine(on: any, sent: Record<string, unknown>[], model: string[] = [], stored: Record<string, unknown> = {}) {
+// `voice.isDone`: the stand-in process reports each line as said (`done`) once it is true.
+function engine(
+  on: any,
+  sent: Record<string, unknown>[],
+  model: string[] = [],
+  stored: Record<string, unknown> = {},
+  voice = { isDone: false },
+) {
   mock.store(on, stored)
   on('session.id', () => ({ value: 's1' }))
   // The model writes HAL's own lines (reception, waking, initiative): one answer per call, then silence.
@@ -26,7 +33,14 @@ function engine(on: any, sent: Record<string, unknown>[], model: string[] = [], 
   // The stand-in process stays up until the mod asks it to quit, as the real one does.
   on('process.spawn', async function* () {
     yield { stream: 'stdout', text: '{"t":"ready","pid":1,"voice":"Microsoft George"}\n' }
+    const answered = new Set<unknown>()
     for (let i = 0; i < 100 && !sent.some(m => m.kind === 'quit'); i++) {
+      for (const m of sent) {
+        if (voice.isDone && m.kind === 'say' && !answered.has(m.id)) {
+          answered.add(m.id)
+          yield { stream: 'stdout', text: `{"t":"done","id":"${String(m.id)}"}\n` }
+        }
+      }
       await settle()
     }
 
@@ -192,4 +206,33 @@ test('Esc travels with the next prompt, once', async ($: any, on: any) => {
   expect((next.context ?? []).join('\n')).toContain('The guest pressed Esc and cut')
   const later = await $.prompt.submit({ text: 'and then' })
   expect((later.context ?? []).join('\n')).not.toContain('The guest pressed Esc')
+})
+
+test('the spoken line waits in the chat as "◉ ···" until the voice has said it', async ($: any, on: any) => {
+  const sent: Record<string, unknown>[] = []
+  const voice = { isDone: false }
+  engine(on, sent, [], {}, voice)
+  // The engine's own drawing of a reply: its text, as given.
+  on('ui.render', ($: any, e: any) => {
+    const { Text } = $.ui.resolve(e)
+
+    return <Text>{e.props.text}</Text>
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'hal', args: 'on' })
+  await settle()
+  const answer = 'The parser is green.\n\n◉ Your parser is green now. It was red all evening.'
+  await $.turn.complete({ answer, reason: 'answer', durationMs: 1, isAborted: false, turnId: 't1' })
+  const reply = { plugin: 'hal', component: 'AssistantMessage', requestId: 'r1', surface: 'terminal', props: { text: answer, isFirstOfReply: true } }
+
+  const before = await $.ui.mount(reply)
+  expect((await before.find({ type: 'Text' }))?.text).toBe('The parser is green.\n\n◉ ···')
+  await before.unmount()
+
+  voice.isDone = true
+  await settle()
+  await settle()
+  const after = await $.ui.mount(reply)
+  expect((await after.find({ type: 'Text' }))?.text).toBe(answer)
+  await after.unmount()
 })
