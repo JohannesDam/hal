@@ -163,7 +163,7 @@ export function eyeCells(columns: number, rows: number, look: Look): string {
  * small eye that slides along it with the gaze. `isAway` closes it to a dim point while
  * the full haze holds the screen: one eye at a time.
  */
-export function bandCells(columns: number, look: Look, isAway: boolean): string {
+export function bandCells(columns: number, look: Look, isAway: boolean, isDeaf = false): string {
   const rows = 3
   const h = rows * 2
   const words = new Uint32Array(columns * rows * 3)
@@ -224,6 +224,13 @@ export function bandCells(columns: number, look: Look, isAway: boolean): string 
         words[i + 2] = bottom === NONE ? DEFAULT : bottom
       }
     }
+  }
+  if (isDeaf && columns >= 8) {
+    // The closed ear: a dim struck-through circle on the horizon's right end.
+    const i = (1 * columns + (columns - 3)) * 3
+    words[i] = 0x2298
+    words[i + 1] = 0x6a5a56
+    words[i + 2] = DEFAULT
   }
 
   return base64(new Uint8Array(words.buffer))

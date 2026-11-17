@@ -9,6 +9,10 @@ export type HalSettings = {
   /** The side pane with the large eye; the band above the prompt is always there. */
   pane: boolean
   name: string
+  /** HAL listens along: the microphone and what the computer plays. */
+  listen: boolean
+  /** Part of the microphone's name; empty picks one (a built-in microphone first). */
+  mic: string
 }
 export type HalMood = 'idle' | 'working' | 'speaking'
 
@@ -19,6 +23,10 @@ declare module 'claude-code' {
       mood: HalMood
       level: HalLevel
       line: string
+      /** The ears as the host reports them: off, listening, deaf (a call), not set up. */
+      ears: string
+      /** What HAL heard you say to him, shown in the band before it is sent. */
+      said: string
     }
   }
 }

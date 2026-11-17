@@ -334,6 +334,38 @@ public sealed class HalNeural {
     try { p.StandardInput.Close(); if (!p.WaitForExit(1500)) p.Kill(); } catch { }
   }
 }
+
+// The ears (hal-ears.py): every stdout line is queued for the dispatcher to pass on.
+// Nothing is written to disk: the heard words exist only in these lines.
+public sealed class HalEars {
+  readonly Process p;
+  public readonly ConcurrentQueue<string> Lines = new ConcurrentQueue<string>();
+
+  public HalEars(string python, string args) {
+    ProcessStartInfo psi = new ProcessStartInfo(python, args);
+    psi.UseShellExecute = false; psi.CreateNoWindow = true;
+    psi.RedirectStandardInput = true; psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
+    psi.StandardOutputEncoding = Encoding.UTF8;
+    p = Process.Start(psi);
+    p.StandardInput.AutoFlush = true;
+    Thread o = new Thread(ReadOut); o.IsBackground = true; o.Start();
+    Thread e = new Thread(ReadErr); e.IsBackground = true; e.Start();
+  }
+
+  public bool IsAlive { get { try { return !p.HasExited; } catch { return false; } } }
+
+  void ReadOut() {
+    try { string line; while ((line = p.StandardOutput.ReadLine()) != null) { if (line.Length > 0) Lines.Enqueue(line); } } catch { }
+  }
+
+  void ReadErr() { try { while (p.StandardError.ReadLine() != null) { } } catch { } }
+
+  public void Send(string json) { try { p.StandardInput.WriteLine(json); } catch { } }
+
+  public void Stop() {
+    try { p.StandardInput.Close(); if (!p.WaitForExit(1500)) p.Kill(); } catch { }
+  }
+}
 "@
 
 # ---------- the voice: Windows OneCore through WinRT, kept warm ----------
@@ -722,6 +754,7 @@ function Start-Next {
     }
   }
   Emit @{ t = 'enter'; id = $item.id; haze = $S.isHaze }
+  Send-Ears '{"gate": true}'   # HAL does not hear himself
   $S.phase = 'enter'
   $script:anim.Start()
 }
@@ -744,6 +777,7 @@ function Stop-Line {
   $msg = @{ t = $S.exitEvent; id = $S.item.id }
   if ($S.exitWhy) { $msg.why = $S.exitWhy }
   Emit $msg
+  Send-Ears '{"gate": false}'
   $S.phase = 'idle'; $S.item = $null; $S.player = $null
   $script:anim.Stop()
   if ($isOneShot -and $S.queue.Count -eq 0) { [System.Windows.Threading.Dispatcher]::CurrentDispatcher.InvokeShutdown(); return }
@@ -923,6 +957,73 @@ $script:anim.Add_Tick({
     }
   })
 
+# ---------- the ears: hal-ears.py, while the mod asks HAL to listen ----------
+# Their lines go to stdout as they are; the host only gates them while HAL speaks.
+$script:ears = $null
+$script:earsWanted = $false
+$script:earsMic = ''
+$script:earsState = 'off'
+$script:earsStarts = @()
+
+function Get-EarsMissing {
+  $missing = @()
+  if (-not (Test-Path -LiteralPath $neuralPython)) { $missing += 'the Python environment' }
+  if (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'hal\venv\Lib\site-packages\soundcard'))) { $missing += 'soundcard' }
+  if (-not (Test-Path -LiteralPath (Join-Path $models 'vad\silero_vad.onnx'))) { $missing += 'the VAD model' }
+  if (-not (Test-Path -LiteralPath (Join-Path $models 'whisper-small\small-decoder.int8.onnx'))) { $missing += 'the Whisper model' }
+  $missing
+}
+
+function Start-Ears {
+  if ($script:ears -and $script:ears.IsAlive) { return }
+  $missing = @(Get-EarsMissing)
+  if ($missing.Count -gt 0) {
+    $script:earsState = 'not set up: ' + ($missing -join ', ')
+    Emit @{ t = 'ears'; state = 'not set up'; why = ($missing -join ', ') }
+    return
+  }
+  # A crashing ear restarts, but at most three times in ten minutes.
+  $now = NowMs
+  $script:earsStarts = @($script:earsStarts | Where-Object { $now - $_ -lt 600000 })
+  if ($script:earsStarts.Count -ge 3) { $script:earsState = 'stopped after three failures'; return }
+  $script:earsStarts += $now
+  $earsScript = Join-Path $PSScriptRoot 'hal-ears.py'
+  $arguments = "-E -s `"$earsScript`""
+  if ($script:earsMic) { $arguments += " --mic `"$($script:earsMic -replace '"', '')`"" }
+  try {
+    $script:ears = New-Object HalEars ($neuralPython, $arguments)
+    $script:earsState = 'starting'
+  } catch { $script:ears = $null; Emit @{ t = 'error'; why = "ears: $_" } }
+}
+
+function Stop-Ears {
+  if ($script:ears) { $script:ears.Stop(); $script:ears = $null }
+  $script:earsState = 'off'
+  Emit @{ t = 'ears'; state = 'off' }
+}
+
+function Send-Ears([string]$json) { if ($script:ears) { $script:ears.Send($json) } }
+
+function Read-Ears {
+  if (-not $script:ears) {
+    if ($script:earsWanted) { Start-Ears }
+    return
+  }
+  $line = $null
+  while ($script:ears.Lines.TryDequeue([ref]$line)) {
+    if ($line -match '"t": "ears"') {
+      try { $state = $line | ConvertFrom-Json; $script:earsState = "$($state.state) (mic: $($state.mic); computer: $($state.loop))" } catch { }
+    }
+    [Console]::Out.WriteLine($line)
+  }
+  [Console]::Out.Flush()
+  if (-not $script:ears.IsAlive) {
+    $script:ears = $null
+    Emit @{ t = 'error'; why = 'the ears stopped' }
+    if ($script:earsWanted) { Start-Ears }
+  }
+}
+
 function Get-Report {
   $mons = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object {
       @{ x = $_.Bounds.X; y = $_.Bounds.Y; width = $_.Bounds.Width; height = $_.Bounds.Height; isPrimary = $_.Primary }
@@ -933,6 +1034,7 @@ function Get-Report {
     neural = $(if ($neural) { if (-not $neural.IsAlive) { 'stopped' } elseif ($neural.IsReady) { "ready$neuralNote" } else { "warming up$neuralNote" } } else { 'not set up: ' + ($neuralMissing -join ', ') })
     lastSynthMs = $script:S.lastSynthMs; lastLatencyMs = $script:S.lastLatencyMs; lastHazeCpuPct = $script:S.lastCpuPct
     queued = $script:S.queue.Count; phase = $script:S.phase
+    ears = $script:earsState
   }
 }
 
@@ -948,6 +1050,13 @@ function Read-Inbox {
     switch ([string]$msg.kind) {
       'say' { [void]$script:S.queue.Add($msg) }
       'check' { Emit @{ t = 'check'; id = $msg.id; report = (Get-Report) } }
+      'ears' {
+        $mic = [string]$msg.mic
+        if ($script:ears -and $mic -ne $script:earsMic) { $script:ears.Stop(); $script:ears = $null }
+        $script:earsMic = $mic
+        $script:earsWanted = [bool]$msg.on
+        if ($script:earsWanted) { $script:earsStarts = @(); Start-Ears; if ($msg.override) { Send-Ears '{"override": true}' } } else { Stop-Ears }
+      }
       'quit' { [System.Windows.Threading.Dispatcher]::CurrentDispatcher.InvokeShutdown() }
     }
   }
@@ -958,6 +1067,7 @@ $poll.Interval = [TimeSpan]::FromMilliseconds(150)
 $poll.Add_Tick({
     try {
       Read-Inbox
+      Read-Ears
       if ($script:S.phase -eq 'idle' -and $script:S.queue.Count -gt 0) { Start-Next }
     } catch { Emit @{ t = 'error'; why = "$_" } }
   })
@@ -971,4 +1081,5 @@ if ($isOneShot) {
 }
 [System.Windows.Threading.Dispatcher]::Run()
 if ($neural) { $neural.Stop() }
+if ($script:ears) { $script:ears.Stop() }
 if ($script:hostMutex) { try { $script:hostMutex.ReleaseMutex() } catch { } }

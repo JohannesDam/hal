@@ -18,7 +18,10 @@ The character is inspired by the archetype of the calm, polite, unsettling ship'
 | `/hal name <name>` | what HAL calls you (defaults to the first name in `git config user.name`) |
 | `/hal say <text>` | make HAL say something now |
 | `/hal eye on\|off` | the large eye in a pane beside the chat (off by default; the band above the prompt stays) |
-| `/hal check` | which voice and screens HAL uses, how fast he answers, and what the haze costs |
+| `/hal listen` | HAL listens along: the microphone and what the computer plays (also during a call, until it ends) |
+| `/hal deaf` | HAL stops listening: both inputs close, and what he heard is forgotten |
+| `/hal mic <name>\|auto` | which microphone he listens to (auto: a built-in one first) |
+| `/hal check` | which voice, ears and screens HAL uses, how fast he answers, and what the haze costs |
 
 Settings are kept between sessions.
 
@@ -48,13 +51,24 @@ Restart Claude Code and type `/hal`.
 
 HAL speaks with **kestrin**, a single-speaker US English [Piper](https://github.com/OHF-voice/piper1-gpl) voice. Its original source may not stay available, so the model is kept as a release of this repository ([voice-kestrin](https://github.com/JohannesDam/hal/releases/tag/voice-kestrin)), outside the source. It runs entirely on the machine, warm in a small Python process (about 0.1 s per line), through HAL's voice chain; "..." in a line becomes real silence, and the full haze carries a generated house tone.
 
-Set it up once per machine (about 280 MB with the Python packages, everything in `%LOCALAPPDATA%\hal`):
+Set it up once per machine (about 650 MB with the speech models and the Python packages, everything in `%LOCALAPPDATA%\hal`; `-NoEars` leaves the speech models out):
 
 ```
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup-voice.ps1
 ```
 
 It needs Python 3.10 or newer (`winget install Python.Python.3.12`). It downloads the voice from the release and checks its SHA-256, and installs `piper-tts` and `sherpa-onnx` from PyPI. With `-Kokoro` it also fetches the Kokoro model (about 350 MB) with the earlier voice **am_michael**, which then speaks when kestrin is missing. Without either, HAL speaks with the Windows voice George; `/hal check` says which voice is in use.
+
+## Listening along
+
+While HAL is awake he listens to a microphone and to what the computer plays (the loopback of the default output). Speech is cut out with Silero VAD and written down by multilingual Whisper (Dutch and English), **on this machine**; the words stay in memory for five minutes and are never written to disk. While HAL speaks, his ears are closed.
+
+- **Spoken to:** a sentence from the microphone that starts with his name ("HAL, run the tests") becomes a prompt. It stands in the prompt box for 1.5 s with "You said: …" above it; change or clear it to stop it. Speech from the computer's audio never becomes a command.
+- **Overheard:** after a while of speech, or a word like "error", HAL asks the model (Haiku) whether one true remark is worth saying. Usually it is not; at most two an hour, never while you type. **That snippet of the last minutes leaves the machine** (it goes to Claude's API), and in a call that includes other people's words.
+- **During a call:** while another app holds the microphone, HAL is deaf by himself. `/hal listen` keeps him listening until that call ends.
+- **Seen:** the eye's aperture narrows while he hears speech, he looks at you when he hears his name, the hint line says "HAL listens", the band shows a closed-ear mark while he is deaf, and Windows shows its microphone indicator whenever he listens.
+
+A Bluetooth headset drops to mono "hands-free" sound while its microphone is open. With a built-in microphone (a laptop) HAL picks that one, and the headset keeps its sound; on a desktop without one, `/hal mic` chooses, or `/hal deaf` closes it.
 
 ## How it works
 
@@ -65,7 +79,8 @@ It needs Python 3.10 or newer (`winget install Python.Python.3.12`). It download
 - `hooks/eye.ts`: the eye in half-block pixels: the band above the prompt and the large eye in the pane.
 - `assets/hal-host.ps1`: HAL's one process per PC. It keeps the voice warm (kestrin, else am_michael, else the Windows voice George), processes it (high-pass, EQ, 3:1 compression, de-esser, one early reflection, fixed level), and keeps a click-through haze window per monitor ready, with the eye on the screen that has focus. The mod talks to it through an inbox folder (`%LOCALAPPDATA%\hal\inbox`); it answers on stdout with its state and the voice's loudness. A line that cannot sound within 5 s is dropped. Each appearance has one choreography: the haze creeps in from the edges, a point of light, the iris opens and the eye comes toward you; the voice never starts before 1.4 s, and waits two to three seconds before something uncomfortable; after the last word he stares, then the iris closes, the centre clears first and a red point fades last. Typing before the first word sends him away in 0.3 s; typing while he speaks clears the centre and shrinks the eye, and he finishes the sentence. Key state is read, never hooked or recorded. Large areas of the haze move slowly (flash-safe); only the aperture's rim follows the voice quickly.
 - `assets/hal-voice.py` with `assets/hal_piper.py` and `assets/hal_kokoro.py`: the neural voice, kept warm; one request per line on stdin, one wav per answer.
-- `tools/setup-voice.ps1`: downloads the voice and builds the Python environment.
+- `assets/hal-ears.py`: the ears, started by HAL's process while he listens: the microphone and the loopback (soundcard, WASAPI), a VAD per input, Whisper small for both; it reports speech starting and stopping and what was said, is gated while HAL speaks, and goes deaf while another app holds the microphone. `hooks/ears.ts`: what the mod does with it (spoken commands, overheard remarks, the tally per day).
+- `tools/setup-voice.ps1`: downloads the voice and the speech models (each checked by SHA-256) and builds the Python environment.
 - `assets/hal.ps1`: one line from a shell, for testing: `powershell -NoProfile -STA -ExecutionPolicy Bypass -File hal.ps1 -Text "Nothing was deleted. I checked."`. When HAL's process runs, the line goes to it.
 
 - `tools/listening_test.py`: the blind listening test for the voice. It renders eight fixed lines with stock Kokoro voices, two blends of them, and the processed Windows voice, runs all of them through HAL's voice chain, and writes `%LOCALAPPDATA%\hal\listening\listening.html`, where the voices are only letters. Setup: Kokoro multi-lang v1.0 from the [sherpa-onnx TTS models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models) under `%LOCALAPPDATA%\hal\models\kokoro`, and a venv with `pip install sherpa-onnx numpy` at `%LOCALAPPDATA%\hal\venv`.
@@ -74,5 +89,5 @@ Tests: `claude plugin test .` runs `hooks/hal.test.tsx`.
 
 ## Next
 
-- Listening along: speech input through the microphone and the computer's audio (plan step 5).
+- The dossier, the reception and the farewell (plan step 6); the terminal as HAL's house (step 7); initiative and the edge glow (step 8).
 - The design team's plan for v0.2: [docs/plan-v0.2.md](docs/plan-v0.2.md); where it stands and what is open: [docs/status-v0.2.md](docs/status-v0.2.md).

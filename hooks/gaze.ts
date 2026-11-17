@@ -17,6 +17,8 @@ export type Attention = {
   toolKind: ToolKind
   /** Until when he looks straight at you: the last word, a real error, the reception. */
   atYouUntil: number
+  /** His ears hear speech right now: the room or the computer. */
+  isHearing: boolean
 }
 
 export type GazeState = {
@@ -99,6 +101,10 @@ export function targetOf(a: Attention, g: GazeState): Target {
 
     return { x: d.x, y: d.y, open: 0.5, isAtYou: false, isBlinking: false }
   }
+  if (a.isHearing) {
+    // Listening: the gaze holds where it is and the aperture narrows.
+    return { x: g.x, y: g.y, open: 0.3, isAtYou: false, isBlinking: false }
+  }
   if (a.now - a.lastEditAt < 2000) {
     // Reading along while you type; when you stop, it stays where the cursor was.
     return { x: READING.x, y: READING.y, open: 0.6, isAtYou: false, isBlinking: false }
@@ -121,7 +127,7 @@ export function stepGazeState(g: GazeState, a: Attention, rnd: () => number): Ga
     next.dartUntil = a.now + 300 + 200 * rnd()
     next.nextDart = a.now + 1500 + 1500 * rnd()
   }
-  if (a.mood === 'idle' && a.now >= g.nextWander) {
+  if (a.mood === 'idle' && !a.isHearing && a.now >= g.nextWander) {
     const angle = rnd() * Math.PI * 2
     next.wanderX = Math.cos(angle) * 0.8
     next.wanderY = Math.sin(angle) * 0.5
@@ -132,8 +138,10 @@ export function stepGazeState(g: GazeState, a: Attention, rnd: () => number): Ga
   next.x += (target.x - next.x) * 0.6
   next.y += (target.y - next.y) * 0.6
   next.open = target.isBlinking ? target.open : next.open + (target.open - next.open) * 0.3
-  next.noiseX = 0.8 * next.noiseX + 0.04 * (rnd() - 0.5)
-  next.noiseY = 0.8 * next.noiseY + 0.04 * (rnd() - 0.5)
+  // A small tremor; nearly none while he listens.
+  const tremor = a.isHearing ? 0.01 : 0.04
+  next.noiseX = 0.8 * next.noiseX + tremor * (rnd() - 0.5)
+  next.noiseY = 0.8 * next.noiseY + tremor * (rnd() - 0.5)
 
   return next
 }

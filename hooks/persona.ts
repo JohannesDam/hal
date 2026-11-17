@@ -7,6 +7,8 @@ export const DEFAULTS: HalSettings = {
   haze: true,
   pane: false,
   name: '',
+  listen: true,
+  mic: '',
 }
 
 const TALK_VALUES: readonly HalTalk[] = ['often', 'sometimes', 'rarely', 'never']
@@ -25,6 +27,8 @@ export function migrate(stored: unknown): HalSettings {
     haze: typeof raw.haze === 'boolean' ? raw.haze : DEFAULTS.haze,
     pane: raw.pane === true,
     name: typeof raw.name === 'string' ? raw.name : '',
+    listen: typeof raw.listen === 'boolean' ? raw.listen : DEFAULTS.listen,
+    mic: typeof raw.mic === 'string' ? raw.mic : '',
   }
 }
 
@@ -233,6 +237,9 @@ export type HalAction =
   | { kind: 'name'; value: string }
   | { kind: 'say'; text: string }
   | { kind: 'eye'; value: boolean }
+  | { kind: 'listen' }
+  | { kind: 'deaf' }
+  | { kind: 'mic'; value: string }
   | { kind: 'check' }
   | { kind: 'help' }
   | { kind: 'bad'; why: string }
@@ -281,6 +288,16 @@ export function parseCommand(args: string): HalAction {
       }
 
       return { kind: 'bad', why: 'Eye is on or off.' }
+    case 'listen':
+      return { kind: 'listen' }
+    case 'deaf':
+      return { kind: 'deaf' }
+    case 'mic':
+      if (lowered === '') {
+        return { kind: 'bad', why: 'Give part of the name of a microphone, or auto: /hal mic headset' }
+      }
+
+      return { kind: 'mic', value: lowered === 'auto' ? '' : value }
     case 'check':
       return { kind: 'check' }
     case 'help':
@@ -306,6 +323,9 @@ export function statusText(s: HalSettings, level: HalLevel): string {
   if (!s.haze) {
     parts.push('no haze')
   }
+  if (!s.listen) {
+    parts.push('deaf')
+  }
 
   return parts.join(' · ')
 }
@@ -318,6 +338,7 @@ export function describe(s: HalSettings, level: HalLevel): string {
     `  talk      ${s.talk}   (often · sometimes · rarely · never)`,
     `  haze      ${s.haze ? 'on' : 'off'}   (red haze with the eye over the screen at real moments, at most four an hour)`,
     `  pane      ${s.pane ? 'on' : 'off'}   (the large eye beside the chat)`,
+    `  listen    ${s.listen ? 'on' : 'off (deaf)'}   (the microphone ${s.mic ? `"${s.mic}"` : '(picked: a built-in one first)'} and what the computer plays; recognised on this machine)`,
     `  name      ${s.name || '(unknown)'}`,
   ].join('\n')
 }
@@ -330,7 +351,10 @@ export const HELP = `/hal                      wake HAL, or show the settings wh
 /hal name <name>          what HAL calls you
 /hal say <text>           make HAL say something now
 /hal eye on|off           the large eye in a pane beside the chat (the band above the prompt stays)
-/hal check                which voice and screens HAL uses, and how fast he answers`
+/hal listen               HAL listens along (also during a call, until it ends)
+/hal deaf                 HAL stops listening: both inputs close
+/hal mic <name>|auto      which microphone HAL listens to
+/hal check                which voice, ears and screens HAL uses, and how fast he answers`
 
 /** The HAL process's own report, for /hal check. */
 export function describeCheck(report: unknown, isOwner: boolean): string {
@@ -358,5 +382,6 @@ export function describeCheck(report: unknown, isOwner: boolean): string {
     `  voice render    ${ms(r.lastSynthMs)} (last line)`,
     `  to first word   ${ms(r.lastLatencyMs)} (last line, from the moment it was sent)`,
     `  haze CPU        ${typeof r.lastHazeCpuPct === 'number' ? `${r.lastHazeCpuPct}% of one core` : 'not measured yet'}`,
+    `  ears            ${typeof r.ears === 'string' ? r.ears : 'unknown'}${typeof r.ears === 'string' && r.ears.startsWith('not set up') ? ' (run tools\\setup-voice.ps1)' : ''}`,
   ].join('\n')
 }

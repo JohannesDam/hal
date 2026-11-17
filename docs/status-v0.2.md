@@ -1,6 +1,6 @@
 # HAL v0.2: status
 
-Where the build stands against [plan-v0.2.md](plan-v0.2.md): steps 1–4 are done, steps 5–9 are open. Each open item names what the plan asks and how to test it.
+Where the build stands against [plan-v0.2.md](plan-v0.2.md): steps 1–4 are done, step 5 is built and in testing, steps 6–9 are open. Each open item names what the plan asks and how to test it.
 
 ## Done
 
@@ -9,7 +9,8 @@ Where the build stands against [plan-v0.2.md](plan-v0.2.md): steps 1–4 are don
 | 1 | Tone fixed (no level 0, no stress rule, no sweet lines); mood moves by itself between 1 and a ceiling (default 3), levels cumulative; spoken line = last line, ≤ 18 words; style filter with forbidden list, last 30 lines, yardstick; character resent after `/clear` and compaction |
 | 2 | One persistent process per PC (`hal-host.ps1`), inbox + stdout protocol, voice processing chain, haze window per monitor sized to the screen, flash-safe movement, `/hal check`; the eye redesigned as a 7-blade diaphragm |
 | 3 | Choreography (entrance, voice ≥ 1.4 s, pause before uncomfortable lines, stare, exit with a fading red point), typing wins, the band above the prompt with attention-based gaze (blink on Enter, per-tool directions, reading along), haze budget 4/hour, eye-only appearances at level 3, side pane optional |
-| 4 | Blind listening test; Kokoro **am_michael** kept warm in a Python helper; house tone under the full haze; `"..."` → 700 ms silence; `tools/setup-voice.ps1` |
+| 4 | Blind listening test; Kokoro **am_michael** kept warm in a Python helper; house tone under the full haze; `"..."` → 700 ms silence; `tools/setup-voice.ps1`. Later the Piper voice **kestrin** (about 0.1 s per line), from this repository's release `voice-kestrin` |
+| 5 | Listening along, built (see step 5 below for what is tested) |
 
 Owner decisions recorded in the plan: voice am_michael (replaced by **kestrin**, a Piper voice the owner chose on 2026-11-18) · ceiling 3 · edge glow during a turn · farewell also after `/exit` · deaf during calls · Dutch and English speech recognition.
 
@@ -20,23 +21,28 @@ Owner decisions recorded in the plan: voice am_michael (replaced by **kestrin**,
 - **Recent lines.** The full character carries the last 30 spoken lines; the per-prompt note carries the last 12, to keep the context small.
 - **Typing detection** reads key state (`GetAsyncKeyState`) instead of `GetLastInputInfo`, so mouse movement does not interrupt HAL. Lone modifiers do not count.
 - **Inbox polling** every 150 ms instead of a FileSystemWatcher (more robust; a half-written message waits up to 2 s).
+- **No Esc window for spoken commands.** A mod cannot hear Esc at an idle prompt. A command spoken to HAL stands in the prompt box for 1.5 s with "You said: …" in the band; any change to it (typing, clearing it) keeps it from being sent. With a draft already in the box, nothing is sent.
+- **Microphone choice.** A built-in microphone first; else the Windows default, unless that is a virtual device (streaming, routing tools); else the first real one. `/hal mic <name>` picks one.
+- **Whisper small** (int8, about 375 MB) instead of 100–250 MB: base misheard too much Dutch. Segments Whisper labels as another language than Dutch or English, or that are mostly signs, are dropped as noise.
 
 ## Open
 
-### Step 5: listening along (develop and test on the laptop)
+### Step 5: listening along (built on the desktop with a Bluetooth headset; laptop test open)
 
-- [ ] Inputs in the persistent process: the **built-in microphone** by default (a Bluetooth headset then stays in stereo) and **WASAPI loopback** of the default output.
-- [ ] Silero VAD → speech recognition with sherpa-onnx, **multilingual Whisper** (decision 6: Dutch and English). Models to `%LOCALAPPDATA%\hal\models`; extend `tools/setup-voice.ps1`.
-- [ ] Gate both inputs while HAL speaks, plus a 300 ms tail.
-- [ ] Transcript only in memory, a rolling buffer of about five minutes; nothing on disk.
-- [ ] **Addressed:** microphone speech starting with "HAL" → show "You said: …" in the band, wait 1.5 s for Esc, then `$.prompt.submit` marked as spoken. Never from loopback.
-- [ ] **Overheard:** after 60–90 s of new speech or a salient word, ask `$.model` (Haiku) with the snippet and the fact block for one true remark; at most two an hour, never while typing; a full-haze moment.
-- [ ] **Noticed:** heard speech becomes metadata in the dossier (when, how long, which input), never the words.
-- [ ] The listening eye: pupil narrows and the gaze holds while speech is heard; looks at you on his name.
-- [ ] `/hal deaf` and a hotkey; a closed-ear mark in the band; the Windows microphone indicator stays honest.
-- [ ] **Decision 5:** deaf automatically while a call app holds the microphone; `/hal listen` overrides it for one call.
-- [ ] The microphone guard ignores HAL's own process; another app holding the mic pauses HAL's speaking.
-- [ ] Hint line "HAL listens" while the inputs are live.
+`assets/hal-ears.py` (soundcard + Silero VAD + Whisper small, all local) runs under the host, which relays its lines and gates it; `hooks/ears.ts` holds what the mod does with them.
+
+- [x] Inputs in the persistent process: a microphone (built-in first) and **WASAPI loopback** of the default output, which follows a change of the default.
+- [x] Silero VAD → **multilingual Whisper small** through sherpa-onnx (decision 6). Models to `%LOCALAPPDATA%\hal\models`, fetched and checked by `tools/setup-voice.ps1`.
+- [x] Gate both inputs while HAL speaks, plus a 300 ms tail. *Tested:* his own line through the loopback is not heard.
+- [x] Transcript only in memory, a rolling buffer of five minutes in the mod; nothing on disk, nothing in the debug log.
+- [x] **Addressed:** microphone speech starting with "HAL" (as speech recognition writes it: Hal, Hall, Hey HAL, …) → "You said: …" in the band, 1.5 s in the prompt box, then `$.prompt.submit` with a note that it was spoken. Never from loopback. *To test by voice.*
+- [x] **Overheard:** after 75 s of new speech (or 8 s with a salient word), at most one weighing per 5 minutes, Haiku with the last minutes and a small fact block, for one true remark or SILENCE; at most two remarks an hour, never while typing or while HAL works; a full-haze moment; what he said goes with the next prompt as hidden context. *To test.*
+- [x] **Noticed:** seconds of speech per day and input in `$.store` (`heard`), never the words.
+- [x] The listening eye: the aperture narrows and the gaze holds while speech is heard; he looks at you on his name.
+- [ ] `/hal deaf` (done: both inputs close, the mic indicator goes out) and a closed-ear mark in the band (done); **a hotkey** is open.
+- [x] **Decision 5:** deaf while another app holds the microphone (read from the store behind Windows' mic indicator); `/hal listen` overrides it until that app lets go. *To test with a call.*
+- [ ] The microphone guard ignores HAL's own process (done); **another app holding the mic pauses HAL's speaking** is open (step 8).
+- [x] Hint line "HAL listens" while the inputs are live.
 
 *Test:* a video playing, a conversation in the room, three spoken commands. A video never commands Claude Code; at most two reactions an hour, each about something true.
 
