@@ -15,9 +15,10 @@ param(
   [string]$OutDir = "",
   [string]$RenderText = "",
   [string]$OutWav = "",
-  # The voice chosen in the blind test; used when Kokoro is set up (tools/setup-voice.ps1).
-  [string]$KokoroVoice = "am_michael",
-  [double]$KokoroSpeed = 0.9,
+  # HAL's voice: a Piper voice (kestrin) or a Kokoro voice (am_michael), when set up by
+  # tools/setup-voice.ps1. Speed 0 takes the engine's own default.
+  [string]$Voice = "kestrin",
+  [double]$Speed = 0.0,
   # Testing only: do not let key presses interrupt (the mod never sets this).
   [switch]$IgnoreKeys
 )
@@ -276,15 +277,15 @@ public sealed class HalVoice {
   }
 }
 
-// Kokoro, kept warm in a small Python process (hal-voice.py): requests on its stdin,
+// The neural voice, kept warm in a small Python process (hal-voice.py): requests on its stdin,
 // answers collected on a background thread. Text goes out ASCII-escaped, so encodings never bite.
-public sealed class HalKokoro {
+public sealed class HalNeural {
   readonly Process p;
   readonly ConcurrentDictionary<string, string> answers = new ConcurrentDictionary<string, string>();
   public volatile bool IsReady;
   public string LastLine = "";
 
-  public HalKokoro(string python, string script, string voice, string speed) {
+  public HalNeural(string python, string script, string voice, string speed) {
     ProcessStartInfo psi = new ProcessStartInfo(python, "-E -s \"" + script + "\" " + voice + " " + speed);
     psi.UseShellExecute = false; psi.CreateNoWindow = true;
     psi.RedirectStandardInput = true; psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
@@ -360,20 +361,30 @@ try {
   }
 } catch { $synth = $null }
 
-# Kokoro, the voice chosen in the blind test, when it is set up on this machine.
-$kokoro = $null
-$kokoroStartedMs = 0
-$kokoroMissing = @()
-$kokoroPython = Join-Path $env:LOCALAPPDATA 'hal\venv\Scripts\python.exe'
-$kokoroScript = Join-Path $PSScriptRoot 'hal-voice.py'
-if (-not (Test-Path -LiteralPath $kokoroPython)) { $kokoroMissing += 'the Python environment' }
-if (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'hal\models\kokoro\kokoro-multi-lang-v1_0\model.onnx'))) { $kokoroMissing += 'the Kokoro model' }
-if (-not $isTool -and $kokoroMissing.Count -eq 0) {
+# The neural voice, when it is set up on this machine: the chosen Piper voice; else Kokoro
+# (the chosen Kokoro voice, or am_michael in place of a Piper voice that is missing).
+$neural = $null
+$neuralStartedMs = 0
+$neuralMissing = @()
+$neuralNote = ''
+$neuralPython = Join-Path $env:LOCALAPPDATA 'hal\venv\Scripts\python.exe'
+$neuralScript = Join-Path $PSScriptRoot 'hal-voice.py'
+$models = Join-Path $env:LOCALAPPDATA 'hal\models'
+$neuralVoice = $null
+$isKokoroName = $Voice -match '^[a-z]{2}_[a-z]+$'
+if (-not $isKokoroName -and (Test-Path -LiteralPath (Join-Path $models "piper\$Voice\$Voice.onnx"))) {
+  $neuralVoice = $Voice; $voiceLabel = "$Voice (Piper)"
+} elseif (Test-Path -LiteralPath (Join-Path $models 'kokoro\kokoro-multi-lang-v1_0\model.onnx')) {
+  $neuralVoice = $(if ($isKokoroName) { $Voice } else { 'am_michael' }); $voiceLabel = "$neuralVoice (Kokoro)"
+  if (-not $isKokoroName) { $neuralNote = " ($Voice is not set up)" }
+} else { $neuralMissing += "the voice $Voice" }
+if (-not (Test-Path -LiteralPath $neuralPython)) { $neuralMissing += 'the Python environment' }
+if (-not $isTool -and $neuralMissing.Count -eq 0) {
   try {
-    $kokoro = New-Object HalKokoro ($kokoroPython, $kokoroScript, $KokoroVoice, $KokoroSpeed.ToString([Globalization.CultureInfo]::InvariantCulture))
-    $kokoroStartedMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    $voiceName = "Kokoro $KokoroVoice"
-  } catch { $kokoro = $null; $kokoroMissing += "a start ($_)" }
+    $neural = New-Object HalNeural ($neuralPython, $neuralScript, $neuralVoice, $Speed.ToString([Globalization.CultureInfo]::InvariantCulture))
+    $neuralStartedMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $voiceName = $voiceLabel
+  } catch { $neural = $null; $neuralMissing += "a start ($_)" }
 }
 
 function Start-Synthesis([string]$text) {
@@ -385,9 +396,9 @@ function Start-Synthesis([string]$text) {
   $asTask.Invoke($null, @($synth.SynthesizeSsmlToStreamAsync($ssml)))
 }
 
-# A line goes to Kokoro when it is there; otherwise to the Windows voice.
+# A line goes to the neural voice when it is there; otherwise to the Windows voice.
 function Start-Voice([string]$text, [string]$id) {
-  if ($kokoro -and $kokoro.IsAlive) { $kokoro.Request($id, $text); return @{ kind = 'kokoro'; id = $id } }
+  if ($neural -and $neural.IsAlive) { $neural.Request($id, $text); return @{ kind = 'neural'; id = $id } }
   if ($synth) { return @{ kind = 'winrt'; task = (Start-Synthesis $text) } }
   $null
 }
@@ -399,9 +410,9 @@ function Get-VoiceResult($job) {
     if ($job.task.IsFaulted) { return @{ done = $true; voice = $null } }
     return @{ done = $true; voice = (Read-Synthesis $job.task) }
   }
-  $line = $kokoro.Take($job.id)
+  $line = $neural.Take($job.id)
   if (-not $line) {
-    if (-not $kokoro.IsAlive) { Emit @{ t = 'error'; why = 'the Kokoro voice stopped' }; return @{ done = $true; voice = $null } }
+    if (-not $neural.IsAlive) { Emit @{ t = 'error'; why = 'the neural voice stopped' }; return @{ done = $true; voice = $null } }
     return @{ done = $false }
   }
   $answer = $line | ConvertFrom-Json
@@ -411,9 +422,9 @@ function Get-VoiceResult($job) {
   @{ done = $true; voice = [HalVoice]::Process($bytes) }
 }
 
-# A line that cannot sound within 5 s is dropped; while Kokoro is still loading, 20 s.
+# A line that cannot sound within 5 s is dropped; while the neural voice is still loading, 20 s.
 function Get-LateMs {
-  if ($kokoro -and -not $kokoro.IsReady -and (NowMs) - $kokoroStartedMs -lt 30000) { return 20000 }
+  if ($neural -and -not $neural.IsReady -and (NowMs) - $neuralStartedMs -lt 30000) { return 20000 }
   5000
 }
 
@@ -919,7 +930,7 @@ function Get-Report {
   @{
     pid = $PID; uptimeS = [int](((NowMs) - $script:S.started) / 1000)
     voice = $voiceName; monitors = $mons; scale = $script:systemScale
-    kokoro = $(if ($kokoro) { if (-not $kokoro.IsAlive) { 'stopped' } elseif ($kokoro.IsReady) { 'ready' } else { 'warming up' } } else { 'not set up: ' + ($kokoroMissing -join ', ') })
+    neural = $(if ($neural) { if (-not $neural.IsAlive) { 'stopped' } elseif ($neural.IsReady) { "ready$neuralNote" } else { "warming up$neuralNote" } } else { 'not set up: ' + ($neuralMissing -join ', ') })
     lastSynthMs = $script:S.lastSynthMs; lastLatencyMs = $script:S.lastLatencyMs; lastHazeCpuPct = $script:S.lastCpuPct
     queued = $script:S.queue.Count; phase = $script:S.phase
   }
@@ -959,5 +970,5 @@ if ($isOneShot) {
   Emit @{ t = 'ready'; pid = $PID; voice = $voiceName }
 }
 [System.Windows.Threading.Dispatcher]::Run()
-if ($kokoro) { $kokoro.Stop() }
+if ($neural) { $neural.Stop() }
 if ($script:hostMutex) { try { $script:hostMutex.ReleaseMutex() } catch { } }

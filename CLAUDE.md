@@ -14,9 +14,9 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 ## Layout
 
 - `hooks/register.tsx` the mod · `persona.ts` character text, style filter, commands · `mood.ts` mood and signals · `gaze.ts` where the eye looks · `eye.ts` the band and pane eye in half-block pixels · `hal.test.tsx` tests.
-- `assets/hal-host.ps1` one process per PC: voice, processing chain, haze windows, choreography; inbox `%LOCALAPPDATA%\hal\inbox` in, JSON lines on stdout out. `assets/hal-voice.py` + `hal_kokoro.py` the warm Kokoro voice (`am_michael`). `assets/hal.ps1` one line from a shell.
-- `tools/setup-voice.ps1` model + Python environment · `tools/listening_test.py` the blind test.
-- Models and the venv live in `%LOCALAPPDATA%\hal`, never in the repo.
+- `assets/hal-host.ps1` one process per PC: voice, processing chain, haze windows, choreography; inbox `%LOCALAPPDATA%\hal\inbox` in, JSON lines on stdout out. `assets/hal-voice.py` + `hal_piper.py` the warm neural voice (Piper `kestrin`; `hal_kokoro.py` for Kokoro `am_michael` when kestrin is missing). `assets/hal.ps1` one line from a shell.
+- `tools/setup-voice.ps1` voice + Python environment · `tools/listening_test.py` the blind test.
+- Models and the venv live in `%LOCALAPPDATA%\hal`, never in the repo. The kestrin model is a GitHub release asset (`voice-kestrin`); `setup-voice.ps1` pins its SHA-256.
 
 ## Checks
 
@@ -32,4 +32,8 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 - The mod's helpers that take `$` must be top-level function declarations (`claude plugin validate` refuses others).
 - User mods cannot change the system prompt (`prompt.compose` is bypassed); the character rides along as `prompt.submit` context.
 - sherpa-onnx insists on the model's exact speaker count in `voices.bin`; Kokoro's lexicon *skips* unknown words, so code words are split (`WebSocket` → `Web Socket`).
-- `$.process.spawn` children inherit handles: the Kokoro helper exits when its stdin closes.
+- `$.process.spawn` children inherit handles: the voice helper exits when its stdin closes.
+- sherpa-onnx 2.0 has no espeak-ng: a Piper voice cannot phonemize there. Piper voices run through `piper-tts`, which brings its own espeak-ng.
+- .NET's redirected stdin may begin with a UTF-8 BOM (when the console input encoding is UTF-8): Python reads the pipe as `utf-8-sig`.
+- Windows PowerShell drops double quotes inside arguments to native programs: `python -c` code uses single quotes only.
+- `python -I` ignores `PYTHONIOENCODING`; use `-X utf8` to print IPA or other non-ANSI text.

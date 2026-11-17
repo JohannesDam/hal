@@ -353,7 +353,7 @@ export function describeCheck(report: unknown, isOwner: boolean): string {
   return [
     `HAL's process: pid ${String(r.pid)}, up ${String(r.uptimeS)} s${isOwner ? '' : ' (owned by another session)'}.`,
     `  voice           ${typeof r.voice === 'string' ? r.voice : 'none: only the haze and the subtitle'}`,
-    `  kokoro          ${typeof r.kokoro === 'string' ? r.kokoro : 'unknown'}${typeof r.kokoro === 'string' && r.kokoro.startsWith('not set up') ? ' (run tools\\setup-voice.ps1)' : ''}`,
+    `  neural voice    ${typeof r.neural === 'string' ? r.neural : 'unknown'}${typeof r.neural === 'string' && r.neural.startsWith('not set up') ? ' (run tools\\setup-voice.ps1)' : ''}`,
     `  screens         ${monitors} (scale ${String(r.scale)})`,
     `  voice render    ${ms(r.lastSynthMs)} (last line)`,
     `  to first word   ${ms(r.lastLatencyMs)} (last line, from the moment it was sent)`,

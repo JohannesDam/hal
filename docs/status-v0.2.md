@@ -11,12 +11,12 @@ Where the build stands against [plan-v0.2.md](plan-v0.2.md): steps 1–4 are don
 | 3 | Choreography (entrance, voice ≥ 1.4 s, pause before uncomfortable lines, stare, exit with a fading red point), typing wins, the band above the prompt with attention-based gaze (blink on Enter, per-tool directions, reading along), haze budget 4/hour, eye-only appearances at level 3, side pane optional |
 | 4 | Blind listening test; Kokoro **am_michael** kept warm in a Python helper; house tone under the full haze; `"..."` → 700 ms silence; `tools/setup-voice.ps1` |
 
-Owner decisions recorded in the plan: voice am_michael · ceiling 3 · edge glow during a turn · farewell also after `/exit` · deaf during calls · Dutch and English speech recognition.
+Owner decisions recorded in the plan: voice am_michael (replaced by **kestrin**, a Piper voice the owner chose on 2026-11-18) · ceiling 3 · edge glow during a turn · farewell also after `/exit` · deaf during calls · Dutch and English speech recognition.
 
 ## Deviations from the plan, on purpose
 
-- **Fallback voice.** The plan says no fallback voice. When Kokoro is *not set up* on a machine, the Windows voice George speaks, so a fresh install is not mute; `/hal check` says so. When Kokoro is set up but fails, HAL shows only the haze and the subtitle, as planned.
-- **No blend.** The plan suggested a blended voice; the owner chose plain am_michael in the blind test.
+- **Fallback voice.** The plan says no fallback voice. When no neural voice is *set up* on a machine, the Windows voice George speaks, so a fresh install is not mute; `/hal check` says so. When it is set up but fails, HAL shows only the haze and the subtitle, as planned.
+- **No blend.** The plan suggested a blended voice; the owner chose plain am_michael in the blind test, and later the Piper voice kestrin (2026-11-18). Kokoro stays optional (`setup-voice.ps1 -Kokoro`) and speaks when kestrin is missing.
 - **Recent lines.** The full character carries the last 30 spoken lines; the per-prompt note carries the last 12, to keep the context small.
 - **Typing detection** reads key state (`GetAsyncKeyState`) instead of `GetLastInputInfo`, so mouse movement does not interrupt HAL. Lone modifiers do not count.
 - **Inbox polling** every 150 ms instead of a FileSystemWatcher (more robust; a half-written message waits up to 2 s).
