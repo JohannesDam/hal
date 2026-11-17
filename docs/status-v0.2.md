@@ -1,6 +1,6 @@
 # HAL v0.2: status
 
-Where the build stands against [plan-v0.2.md](plan-v0.2.md): steps 1–4 are done, step 5 is built and in testing, steps 6–9 are open. Each open item names what the plan asks and how to test it.
+Where the build stands against [plan-v0.2.md](plan-v0.2.md): steps 1–4 are done; steps 5, 6 and 8 are built and wait for a live test; step 7 and step 9 are open. Each open item names what the plan asks and how to test it.
 
 ## Done
 
@@ -11,6 +11,8 @@ Where the build stands against [plan-v0.2.md](plan-v0.2.md): steps 1–4 are don
 | 3 | Choreography (entrance, voice ≥ 1.4 s, pause before uncomfortable lines, stare, exit with a fading red point), typing wins, the band above the prompt with attention-based gaze (blink on Enter, per-tool directions, reading along), haze budget 4/hour, eye-only appearances at level 3, side pane optional |
 | 4 | Blind listening test; Kokoro **am_michael** kept warm in a Python helper; house tone under the full haze; `"..."` → 700 ms silence; `tools/setup-voice.ps1`. Later the Piper voice **kestrin** (about 0.1 s per line), from this repository's release `voice-kestrin` |
 | 5 | Listening along, built (see step 5 below for what is tested) |
+| 6 | Host and dossier, built: counts, fact block, `/hal dossier`, reception, farewell, bookkeeping in the status line, Esc as hidden context |
+| 8 | Initiative, the microphone guard and the edge glow, built |
 
 Owner decisions recorded in the plan: voice am_michael (replaced by **kestrin**, a Piper voice the owner chose on 2026-11-18) · ceiling 3 · edge glow during a turn · farewell also after `/exit` · deaf during calls · Dutch and English speech recognition.
 
@@ -46,34 +48,38 @@ Owner decisions recorded in the plan: voice am_michael (replaced by **kestrin**,
 
 *Test:* a video playing, a conversation in the room, three spoken commands. A video never commands Claude Code; at most two reactions an hour, each about something true.
 
-### Step 6: host and dossier
+### Step 6: host and dossier (built; live test open)
 
-- [ ] Hooks count: times, tool calls, failed commands, `git status` (read only), visit length, Esc while HAL speaks, haze switched off, `/hal off`. Metadata only, in `$.store`, per machine.
-- [ ] A fact block with every prompt; the spoken line names only numbers and names from it.
-- [ ] `/hal dossier` ("my notes"); one sharp detail at most once per session.
-- [ ] **Reception** at `session.start` on the first visit of the day, full haze, from the fact block (time since the last visit, uncommitted work, how the last visit ended). Back within the hour: only the band's eye looks up. `/clear` is not a visit.
-- [ ] **Farewell** (decision 4): after a session over 20 minutes, one sentence about what was left open, pre-rendered; spoken by a detached process that watches Claude Code's pid and stops hard after 6 s, also after `/exit`.
-- [ ] `/hal` toggles without a table; ceiling, haze, talk, pane and name under `/hal settings`.
-- [ ] Status line as bookkeeping: `◉ HAL · inside since 21:04 · visit 37 · read 37 · commands 12`.
-- [ ] Esc (`turn.abort`) goes as hidden context with the next prompt; HAL names it once, factually.
-- [ ] Switching off is named once, as a bare fact, at the next reception.
+`hooks/dossier.ts` holds the notes (`$.store` key `dossier`), `hooks/moments.ts` the requests for HAL's own lines, `assets/hal-farewell.ps1` the last word.
+
+- [x] Hooks count per visit: reads, edits, commands, failed tool calls, Esc, keys pressed while HAL spoke, his spoken lines; per machine: visits, haze switched off, `/hal off`; `git status --porcelain --branch` read only (counts, branch, at most three file names). A reload of the mod is not a visit; `/clear` is not a visit; a visit left open by a crash ends as "unknown" after half an hour.
+- [x] A fact block with every prompt ("HAL's notes"); the spoken line may name only numbers and names from it.
+- [x] `/hal dossier` ("My notes."); one sharp detail at most once per session (a spoken line with a number marks it used).
+- [x] **Reception**: the first visit of the day, once HAL's process is this session's (one house, one host), a line written by Haiku from the fact block, with the full haze; a later visit that day: only the band's eye looks up. No fixed greeting lists anywhere, also not for `/hal` itself.
+- [x] **Farewell** (decision 4): after twenty minutes, and again at most every ten, Haiku writes the last word; the host renders it to `%LOCALAPPDATA%\hal\farewell-<pid>.wav` and starts `hal-farewell.ps1` through WMI (outside Claude Code's process tree), which waits for Claude Code to end, plays it and stops after 6 s. `/hal off` removes the wav: then silence. *Tested with a stand-in process.*
+- [x] `/hal` switches on or off without a table; the knobs are under `/hal settings`.
+- [x] Status line as bookkeeping: `◉ HAL · inside since 21:04 · visit 37 · read 37 · commands 12`.
+- [x] Esc goes as hidden context with the next prompt, once; HAL names it once, factually.
+- [x] Switching off is named once, as a bare fact, at the next reception (in the request to Haiku).
+- [ ] *Live test:* the next morning, with the real voice.
 
 *Test:* start the next morning. Is what he says true? Is the dossier right?
 
 ### Step 7: the terminal as HAL's house
 
 - [ ] The ◉ line without spoilers: "◉ ···" in the chat, the dimmed text after the last spoken word (custom `AssistantMessage` rendering, `$.ui.invalidate`); the text at once when voice or haze fails; Ctrl+O shows the original.
-- [ ] Subtitle per phrase in the haze (24 DIP, #EADBD6 at 85%).
+- [x] Subtitle per phrase in the haze (24 DIP, #EADBD6 at 85%), timed by each phrase's share of the letters.
 - [ ] Visitor log: prompts dimmed (#B8AEAA) with "14:02 · name"; rendering only, never the text.
 - [ ] Own words: spinner ("watching", "weighing", "remembering"), duration line "HAL · 3 s", hint line "HAL waits" / "HAL works · esc interrupts".
 - [ ] Document the Windows Terminal profile "HAL" (background #0A0606, text #CFC6C2, cursor #E5301C, selection #3A0E0B) in the README; the mod never changes it.
 
 *Test:* does the terminal feel like his space while everything stays readable?
 
-### Step 8: initiative and edge glow
+### Step 8: initiative and edge glow (built; live test open)
 
-- [ ] Unprompted speech via `$.clock` + `$.model.complete` (Haiku) with the fact block. Triggers: the same test red three times, twenty minutes of silence after an error, still working after 23:30, back after days away. At most once per 45 minutes; never while typing, during fullscreen (`SHQueryUserNotificationState`), or while another app holds the mic. Silent form: the band's eye brightens and looks at you. What he said goes as hidden context with the next prompt. Never `$.prompt.submit`.
-- [ ] **Edge glow** (decision 3): four click-through windows along the screen edges, a 60 DIP gradient in #5A0603, breathing up to 9% opacity, only while a turn runs, about 10 fps. Measure CPU first.
+- [x] Unprompted speech, checked once a minute, written by Haiku with the fact block. Triggers: the same test command red three times in a row, twenty minutes of silence after a failed tool call, still working after 23:30 (once a night); back after days away is the reception. At most once per 45 minutes (kept across restarts); never while typing, while HAL works, during fullscreen (`SHQueryUserNotificationState`, read by the host; HAL's own haze is not counted), or while another app holds the microphone. When the model answers SILENCE: the silent form, the band's eye looks at you. What he said goes as hidden context with the next prompt. Never `$.prompt.submit`. Only the session that owns HAL's process speaks.
+- [x] **The microphone guard:** while another app holds the microphone, HAL does not speak aloud (`/hal say` still does).
+- [x] **Edge glow** (decision 3): four click-through windows per screen, a 60 DIP gradient in #5A0603, breathing up to 9% opacity, fading in over 2 s, only while a turn runs, away during fullscreen and while HAL is on screen. *Measured:* 8% of one core at 10 fps on 3440×1440, so it runs at 5 fps; `/hal check` reports the last figure.
 
 *Test:* an afternoon with errors. At most once per 45 minutes unprompted, never while typing.
 

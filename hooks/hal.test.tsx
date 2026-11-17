@@ -2,8 +2,11 @@ import { expect, mock, test } from 'claude-code/testing'
 
 // Nothing sits beneath the plugin: each hook here stands for the engine.
 // `sent` collects what the mod writes into HAL's inbox.
-function engine(on: any, sent: Record<string, unknown>[]) {
-  mock.store(on)
+function engine(on: any, sent: Record<string, unknown>[], model: string[] = [], stored: Record<string, unknown> = {}) {
+  mock.store(on, stored)
+  on('session.id', () => ({ value: 's1' }))
+  // The model writes HAL's own lines (reception, waking, initiative): one answer per call, then silence.
+  on('model.complete', () => ({ value: { isAnswered: true, text: model.shift() ?? 'SILENCE', usage: { input_tokens: 1, output_tokens: 1 } } }))
   mock.clock(on, { now: Date.UTC(2026, 10, 17, 13, 0) })
   mock.env(on, { SystemRoot: 'C:\\Windows', LOCALAPPDATA: 'C:\\Users\\test\\AppData\\Local' })
   on('command.register', () => ({ value: { command: 'hal' } }))
@@ -15,7 +18,8 @@ function engine(on: any, sent: Record<string, unknown>[]) {
   on('turn.complete', (_: unknown, e: any) => ({ text: e.answer }))
   on('process.run', (_: unknown, e: any) => {
     const argv: string[] = e.argv
-    const stdout = argv[0] === 'git' ? 'Sam Tester\n' : '60\n'
+    const stdout =
+      argv[0] === 'git' && argv[1] === 'status' ? '## main...origin/main\n M src/parser.ts\n?? notes.txt\n' : argv[0] === 'git' ? 'Sam Tester\n' : '60\n'
 
     return { value: { exitCode: 0, stdout, stderr: '' } }
   })
@@ -47,12 +51,17 @@ test('the character is sent whole, then as a note, and whole again after /clear'
   await $.command.run({ command: 'hal', args: 'on' })
 
   const first = await $.prompt.submit({ text: 'hello' })
-  expect(first.context?.at(-1)).toContain('HAL is ON. Mood now: level')
+  const firstContext = (first.context ?? []).join('\n')
+  expect(firstContext).toContain('HAL is ON. Mood now: level')
+  // The fact block rides along: true counts from the hooks, git read only.
+  expect(firstContext).toContain("HAL's notes (true counts from the hooks")
+  expect(firstContext).toContain('git: branch main; 1 changed files uncommitted (parser.ts); 1 untracked.')
 
   await $.session.end({ reason: 'clear', sessionId: 's1', resume: {} })
   const afterClear = await $.prompt.submit({ text: 'again' })
-  expect(afterClear.context?.at(-1)).toContain('# Character mode: HAL')
-  expect(afterClear.context?.at(-1)).toContain('Level 3, ominous: everything of levels 1 and 2')
+  const clearContext = (afterClear.context ?? []).join('\n')
+  expect(clearContext).toContain('# Character mode: HAL')
+  expect(clearContext).toContain('Level 3, ominous: everything of levels 1 and 2')
 })
 
 test('a clean last line goes to HAL; a sweet one keeps him silent', async ($: any, on: any) => {
@@ -77,9 +86,9 @@ test('a clean last line goes to HAL; a sweet one keeps him silent', async ($: an
   expect(typeof say?.at).toBe('number')
 })
 
-test('the reception and a real error get the full haze; an error comes after a long stare', async ($: any, on: any) => {
+test('waking him and a real error get the full haze; an error comes after a long stare', async ($: any, on: any) => {
   const sent: Record<string, unknown>[] = []
-  engine(on, sent)
+  engine(on, sent, ['Your parser has one changed file. I saw it first.'])
   on('turn.start', (_: unknown, e: any) => ({ turnId: e.turnId }))
   on('tool.call', () => ({ result: { stdout: '', stderr: 'failed', interrupted: false }, isError: true }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -99,7 +108,7 @@ test('the reception and a real error get the full haze; an error comes after a l
 
 test('at most four full hazes an hour', async ($: any, on: any) => {
   const sent: Record<string, unknown>[] = []
-  engine(on, sent)
+  engine(on, sent, ['Awake. One file changed in your folder.'])
   on('turn.start', (_: unknown, e: any) => ({ turnId: e.turnId }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'hal', args: 'on' })
@@ -119,7 +128,7 @@ test('at most four full hazes an hour', async ($: any, on: any) => {
     await settle()
   }
   const hazes = sent.filter(m => m.kind === 'say' && m.haze === true)
-  expect(hazes.length).toBe(4) // the reception, then three of the six long jobs
+  expect(hazes.length).toBe(4) // waking him, then three of the six long jobs
 })
 
 test('/hal off asks the process to quit', async ($: any, on: any) => {
@@ -131,4 +140,56 @@ test('/hal off asks the process to quit', async ($: any, on: any) => {
   await $.command.run({ command: 'hal', args: 'off' })
   await settle()
   expect(sent.some(m => m.kind === 'quit')).toBe(true)
+})
+
+test('the first visit of the day is received in full; a second visit that day only gets a look', async ($: any, on: any) => {
+  const sent: Record<string, unknown>[] = []
+  const settings = { isOn: true, ceiling: 3, talk: 'sometimes', haze: true, pane: false, name: 'Sam', listen: false, mic: '' }
+  engine(on, sent, ['Three days. Your parser changes are still uncommitted.'], { settings })
+  await $.session.start({ cwd: '/work/parser', surface: 'terminal', isInteractive: true })
+  await settle()
+  await settle()
+  const reception = sent.find(m => m.kind === 'say')
+  expect(reception?.text).toBe('Three days. Your parser changes are still uncommitted.')
+  expect(reception?.haze).toBe(true)
+  const notes = await $.command.run({ command: 'hal', args: 'dossier' })
+  expect(notes.text).toContain('Visit 1 to this machine')
+})
+
+test('a visit already received today gets only a look', async ($: any, on: any) => {
+  const sent: Record<string, unknown>[] = []
+  const settings = { isOn: true, ceiling: 3, talk: 'sometimes', haze: true, pane: false, name: 'Sam', listen: false, mic: '' }
+  const dossier = { visits: 4, firstSeen: 0, open: {}, hazeOff: 0, halOff: 0, offsSinceReception: [], receptionDay: '2026-11-17' }
+  engine(on, sent, ['This line must not be asked for.'], { settings, dossier })
+  await $.session.start({ cwd: '/work/parser', surface: 'terminal', isInteractive: true })
+  await settle()
+  await settle()
+  expect(said(sent)).toEqual([])
+})
+
+test('/hal dossier reads the notes; /hal off is counted and named at the next reception', async ($: any, on: any) => {
+  const sent: Record<string, unknown>[] = []
+  engine(on, sent)
+  on('tool.call', () => ({ result: { stdout: '' }, isError: false }))
+  await $.session.start({ cwd: '/work/parser', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'hal', args: 'on' })
+  await $.tool.call({ tool: 'Read', file_path: 'a.ts' })
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
+  const notes = await $.command.run({ command: 'hal', args: 'dossier' })
+  expect(notes.text).toContain('My notes.')
+  expect(notes.text).toContain('This visit: 1 reads, 0 edits, 1 commands, 0 failed tool calls')
+  await $.command.run({ command: 'hal', args: 'off' })
+  const after = await $.command.run({ command: 'hal', args: 'dossier' })
+  expect(after.text).toContain('HAL switched off 1 times')
+})
+
+test('Esc travels with the next prompt, once', async ($: any, on: any) => {
+  engine(on, [])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'hal', args: 'on' })
+  await $.turn.complete({ answer: '', reason: 'aborted', durationMs: 1, isAborted: true, turnId: 't1' })
+  const next = await $.prompt.submit({ text: 'go on' })
+  expect((next.context ?? []).join('\n')).toContain('The guest pressed Esc and cut')
+  const later = await $.prompt.submit({ text: 'and then' })
+  expect((later.context ?? []).join('\n')).not.toContain('The guest pressed Esc')
 })

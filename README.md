@@ -10,7 +10,9 @@ The character is inspired by the archetype of the calm, polite, unsettling ship'
 
 | Command | What it does |
 |---|---|
-| `/hal` | wake HAL, or show the settings when he is awake |
+| `/hal` | wake HAL, or put him to sleep |
+| `/hal settings` | the knobs below, as they are set |
+| `/hal dossier` | his notes: what the hooks counted, per machine |
 | `/hal off` | HAL sleeps; Claude talks normally again |
 | `/hal ceiling 1-3` | how far HAL's mood may rise: 1 watchful · 2 suspicious · 3 ominous (cumulative). The mood moves by itself, on what really happens. |
 | `/hal talk often\|sometimes\|rarely\|never` | how often HAL speaks out loud |
@@ -58,6 +60,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup-voice.ps1
 ```
 
 It needs Python 3.10 or newer (`winget install Python.Python.3.12`). It downloads the voice from the release and checks its SHA-256, and installs `piper-tts` and `sherpa-onnx` from PyPI. With `-Kokoro` it also fetches the Kokoro model (about 350 MB) with the earlier voice **am_michael**, which then speaks when kestrin is missing. Without either, HAL speaks with the Windows voice George; `/hal check` says which voice is in use.
+
+## Host and guest
+
+HAL keeps notes per machine (`/hal dossier`): visits, how long, reads, edits, commands, failed tool calls, Esc, keys pressed while he spoke, the haze switched off, `/hal off`, and `git status` read only. Only metadata, never file contents or heard words. The notes travel with every prompt as a fact block, and the spoken line names only numbers and names from it. The status line is his bookkeeping: `◉ HAL · inside since 21:04 · visit 37 · read 37 · commands 12`.
+
+- **Reception:** the first visit of the day, HAL speaks before you type, with the full haze, one line from the facts (how long you were away, what lies uncommitted, how the last visit ended). Later that day only the eye in the band looks up. A second Claude Code session on the same PC gets no reception: one house, one host.
+- **Farewell:** after twenty minutes HAL prepares his last word about what was left open. When Claude Code ends, a small process outside it plays that sentence and stops after six seconds. `/hal off` cancels it.
+- **Initiative:** rarely, unprompted: the same test red three times, twenty minutes of silence after an error, still working after half past eleven. At most once per 45 minutes, never while you type, during a fullscreen app, or while another app holds the microphone. Sometimes only the eye looks at you.
+- **Edge glow:** while a turn runs, a dark red gradient breathes along the screen edges (at most 9%); never during fullscreen.
+- Esc travels with your next prompt; he names it once. While another app holds the microphone, he does not speak aloud.
 
 ## Listening along
 

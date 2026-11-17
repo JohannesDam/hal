@@ -60,8 +60,42 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
 
 public static class HalNative {
+  [DllImport("shell32.dll")] static extern int SHQueryUserNotificationState(out int state);
+  // A fullscreen app, a D3D game or presentation mode: then HAL keeps his initiative to himself.
+  public static bool IsFullscreen() { int s; if (SHQueryUserNotificationState(out s) != 0) return false; return s == 2 || s == 3 || s == 4; }
+
+  // Who holds a microphone right now, from the store behind Windows' mic indicator; HAL's own
+  // Python processes are left out. Returns the app's short name, or "" when nobody else does.
+  public static string MicUser(string[] own) {
+    string bas = @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
+    string found = Scan(bas, true, own);
+    return found != "" ? found : Scan(bas + @"\NonPackaged", false, own);
+  }
+
+  static string Scan(string path, bool isPackaged, string[] own) {
+    try {
+      using (RegistryKey key = Registry.CurrentUser.OpenSubKey(path)) {
+        if (key == null) return "";
+        foreach (string name in key.GetSubKeyNames()) {
+          if (name == "NonPackaged") continue;
+          using (RegistryKey app = key.OpenSubKey(name)) {
+            if (app == null) continue;
+            object start = app.GetValue("LastUsedTimeStart"), stop = app.GetValue("LastUsedTimeStop");
+            if (start == null || stop == null || Convert.ToInt64(start) == 0 || Convert.ToInt64(stop) != 0) continue;
+            if (Array.IndexOf(own, name.ToLowerInvariant()) >= 0) continue;
+            if (isPackaged) return name.Split('_')[0];
+            string[] parts = name.Split('#');
+            return parts[parts.Length - 1];
+          }
+        }
+      }
+    } catch { }
+    return "";
+  }
+
   [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
   [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int i, int v);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
@@ -70,6 +104,13 @@ public static class HalNative {
   public static void ClickThrough(IntPtr h) { SetWindowLong(h, -20, GetWindowLong(h, -20) | 0x20 | 0x80000 | 0x80 | 0x8000000); }
   public static IntPtr ActiveMonitor() { return MonitorFromWindow(GetForegroundWindow(), 2); }
   public static IntPtr MonitorOf(IntPtr h) { return MonitorFromWindow(h, 2); }
+  [StructLayout(LayoutKind.Sequential)] struct BasicInfo { public IntPtr exit; public IntPtr peb; public IntPtr affinity; public IntPtr priority; public IntPtr pid; public IntPtr parent; }
+  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr h, int c, ref BasicInfo b, int l, out int r);
+  // The process that started this one: Claude Code, whose exit the farewell waits for.
+  public static int ParentPid() {
+    try { BasicInfo b = new BasicInfo(); int r; NtQueryInformationProcess(Process.GetCurrentProcess().Handle, 0, ref b, Marshal.SizeOf(b), out r); return b.parent.ToInt32(); }
+    catch { return 0; }
+  }
   [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
   // Whether a key went down since the last call (or is down now). Reads key state only:
   // no hook, nothing recorded. Mouse buttons and lone modifiers do not count.
@@ -535,7 +576,7 @@ $eyeXaml = @"
           </RadialGradientBrush>
         </Ellipse.Fill>
       </Ellipse>
-      <TextBlock x:Name="Line" TextAlignment="Center" TextWrapping="Wrap" FontFamily="Segoe UI Light" FontSize="26" Foreground="#FFEADBD6" Opacity="0">
+      <TextBlock x:Name="Line" TextAlignment="Center" TextWrapping="Wrap" FontFamily="Segoe UI Light" FontSize="24" Foreground="#FFEADBD6" Opacity="0">
         <TextBlock.Effect><DropShadowEffect Color="#FF7A0000" BlurRadius="18" ShadowDepth="0" Opacity="1"/></TextBlock.Effect>
       </TextBlock>
     </Canvas>
@@ -734,6 +775,12 @@ function Start-Next {
   $S.exitEvent = 'done'; $S.exitWhy = ''
   $S.synthStartMs = NowMs
   $S.job = $null; $S.wav = $null; $S.lead = 0.0; $S.isPlayed = $false
+  # The subtitle shows one phrase at a time, timed by its share of the letters.
+  $S.phrases = @(([string]$item.text -split '(?<=[,.;:?…])\s+') | Where-Object { $_.Trim() })
+  if ($S.phrases.Count -eq 0) { $S.phrases = @('') }
+  $S.phraseAt = @(); $total = [Math]::Max(1.0, [double]([string]$item.text).Length); $sum = 0.0
+  foreach ($ph in $S.phrases) { $S.phraseAt += $sum / $total; $sum += $ph.Length + 1 }
+  $S.phrase = 0
   if (-not $S.isEyeOnly -and $item.text) { $S.job = Start-Voice ([string]$item.text) ([string]$item.id) }
   $null = [HalNative]::AnyKeyDown()   # forget keys pressed before this line
   $S.cpuAt = @{ cpu = (Get-Process -Id $PID).TotalProcessorTime.TotalMilliseconds; at = $S.clock.Elapsed.TotalMilliseconds }
@@ -743,7 +790,7 @@ function Start-Next {
     foreach ($p in $windows) {
       Set-Strength $p ([double]$item.strength)
       Set-Haze $p 0 0
-      $p.Line.Text = [string]$item.text
+      $p.Line.Text = [string]$S.phrases[0]
       $p.Line.Opacity = 0; $p.Spark.Opacity = 0; $p.EyeGroup.Opacity = 0
       $p.win.Opacity = 1
       if (-not $p.win.IsVisible) { $p.win.Show(); $p.win.WindowState = 'Maximized' }
@@ -931,9 +978,15 @@ $script:anim.Add_Tick({
           if ($S.voice) { $seconds = $S.voice.Seconds; $fast = $S.voice.FastAt($u); $slow = $S.voice.SlowAt($u) }
           if ($isKeyed -and $null -eq $S.interruptedAt) { $S.interruptedAt = $t }
           if ($u - $S.lastLevelAt -ge 0.04) { $S.lastLevelAt = $u; Emit @{ t = 'level'; v = [Math]::Round($fast, 2) } }
+          $k = $S.phrases.Count - 1
+          while ($k -gt 0 -and $u / [Math]::Max(0.1, $seconds) -lt $S.phraseAt[$k]) { $k-- }
+          if ($k -ne $S.phrase) {
+            $S.phrase = $k
+            foreach ($p in $S.windows) { if ($p.Line.Visibility -eq 'Visible') { $p.Line.Text = [string]$S.phrases[$k] } }
+          }
           if ($u -ge $seconds) {
             Emit @{ t = 'level'; v = 0 }
-            if ($null -ne $S.interruptedAt) { Start-Exit $t 0.3 'done' '' }
+            if ($null -ne $S.interruptedAt) { Start-Exit $t 0.3 'done' 'interrupted' }
             else { $S.phase = 'stare'; $S.stareStart = $t; $S.stareLength = 1.2 }
           }
         }
@@ -956,6 +1009,144 @@ $script:anim.Add_Tick({
       try { $S.exitEvent = 'dropped'; $S.exitWhy = 'error'; Stop-Line } catch { }
     }
   })
+
+# ---------- the edge glow: four narrow windows along each screen's edges, only during a turn ----------
+# A 60 DIP gradient in #5A0603 that breathes up to 9% opacity at 5 fps (half the CPU of 10). The layer
+# stands still; only the windows' opacity changes. Never during fullscreen or while HAL speaks.
+$script:glow = @{ on = $false; windows = @(); key = ''; started = 0.0; clock = [Diagnostics.Stopwatch]::StartNew() }
+
+function New-GlowWindow([double]$x, [double]$y, [double]$w, [double]$h, [string]$side) {
+  $win = New-Object System.Windows.Window
+  $win.WindowStyle = 'None'; $win.AllowsTransparency = $true; $win.Background = [System.Windows.Media.Brushes]::Transparent
+  $win.Topmost = $true; $win.ShowInTaskbar = $false; $win.ShowActivated = $false; $win.Focusable = $false
+  $win.ResizeMode = 'NoResize'; $win.IsHitTestVisible = $false
+  $win.Left = $x; $win.Top = $y; $win.Width = $w; $win.Height = $h; $win.Opacity = 0
+  $brush = New-Object System.Windows.Media.LinearGradientBrush
+  switch ($side) {
+    'top' { $brush.StartPoint = '0,0'; $brush.EndPoint = '0,1' }
+    'bottom' { $brush.StartPoint = '0,1'; $brush.EndPoint = '0,0' }
+    'left' { $brush.StartPoint = '0,0'; $brush.EndPoint = '1,0' }
+    'right' { $brush.StartPoint = '1,0'; $brush.EndPoint = '0,0' }
+  }
+  [void]$brush.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb(255, 0x5A, 0x06, 0x03)), 0))
+  [void]$brush.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb(0, 0x5A, 0x06, 0x03)), 1))
+  $rect = New-Object System.Windows.Shapes.Rectangle
+  $rect.Fill = $brush; $rect.IsHitTestVisible = $false
+  $win.Content = $rect
+  $win.Add_SourceInitialized({ [HalNative]::ClickThrough((New-Object System.Windows.Interop.WindowInteropHelper $this).Handle) })
+  $win
+}
+
+function Get-GlowWindows {
+  $screens = [System.Windows.Forms.Screen]::AllScreens
+  $key = ($screens | ForEach-Object { "$($_.Bounds)" }) -join ';'
+  if ($script:glow.key -ne $key) {
+    foreach ($old in $script:glow.windows) { try { $old.Close() } catch { } }
+    $list = @()
+    foreach ($screen in $screens) {
+      $b = $screen.Bounds; $k = $script:systemScale
+      $x = $b.X / $k; $y = $b.Y / $k; $w = $b.Width / $k; $h = $b.Height / $k; $d = 60.0
+      $list += New-GlowWindow $x $y $w $d 'top'
+      $list += New-GlowWindow $x ($y + $h - $d) $w $d 'bottom'
+      $list += New-GlowWindow $x ($y + $d) $d ($h - 2 * $d) 'left'
+      $list += New-GlowWindow ($x + $w - $d) ($y + $d) $d ($h - 2 * $d) 'right'
+    }
+    $script:glow.windows = $list
+    $script:glow.key = $key
+  }
+  $script:glow.windows
+}
+
+function Set-Glow([bool]$on) {
+  $script:glow.on = $on
+  if ($on) {
+    $script:glow.started = $script:glow.clock.Elapsed.TotalSeconds
+    $script:glowCpuAt = @{ cpu = (Get-Process -Id $PID).TotalProcessorTime.TotalMilliseconds; at = $script:glow.clock.Elapsed.TotalMilliseconds }
+    foreach ($w in (Get-GlowWindows)) { if (-not $w.IsVisible) { $w.Show() } }
+    $script:glowTimer.Start()
+  } else {
+    $script:glowTimer.Stop()
+    if ($script:glowCpuAt) {
+      $ms = $script:glow.clock.Elapsed.TotalMilliseconds - $script:glowCpuAt.at
+      if ($ms -gt 2000) { $script:S.lastGlowCpuPct = [Math]::Round(100 * ((Get-Process -Id $PID).TotalProcessorTime.TotalMilliseconds - $script:glowCpuAt.cpu) / $ms, 1) }
+      $script:glowCpuAt = $null
+    }
+    foreach ($w in $script:glow.windows) { $w.Opacity = 0; if ($w.IsVisible) { $w.Hide() } }
+  }
+}
+
+$script:glowTimer = New-Object System.Windows.Threading.DispatcherTimer
+$script:glowTimer.Interval = [TimeSpan]::FromMilliseconds(200)
+$script:glowTimer.Add_Tick({
+    try {
+      $t = $script:glow.clock.Elapsed.TotalSeconds - $script:glow.started
+      # Away while HAL is on screen or a fullscreen app runs; it fades in over 2 s and breathes.
+      $isQuiet = ($script:S.phase -ne 'idle') -or $script:desk.fullscreen
+      $phase = ($t % 5.5) / 5.5
+      if ($phase -lt 0.4) { $breath = [Math]::Sin([Math]::PI / 2 * $phase / 0.4) } else { $breath = [Math]::Cos([Math]::PI / 2 * ($phase - 0.4) / 0.6) }
+      $level = 0.0
+      if (-not $isQuiet) { $level = [Math]::Min(1.0, $t / 2.0) * (0.045 + 0.045 * $breath) }
+      foreach ($w in $script:glow.windows) { $w.Opacity = $level }
+    } catch { Emit @{ t = 'error'; why = "glow: $_" } }
+  })
+
+# ---------- a line rendered ahead, for the farewell: processed, written to a wav, not played ----------
+$script:renders = New-Object System.Collections.ArrayList
+
+function Read-Renders {
+  foreach ($r in @($script:renders)) {
+    $result = Get-VoiceResult $r.job
+    if (-not $result.done) {
+      if ((NowMs) - $r.at -gt 30000) { [void]$script:renders.Remove($r); Emit @{ t = 'rendered'; id = $r.id; ok = $false; why = 'late' } }
+      continue
+    }
+    [void]$script:renders.Remove($r)
+    if (-not $result.voice) { Emit @{ t = 'rendered'; id = $r.id; ok = $false; why = 'no voice' }; continue }
+    try {
+      [IO.File]::WriteAllBytes($r.path, $result.voice.Wav)
+      Emit @{ t = 'rendered'; id = $r.id; ok = $true; path = $r.path; seconds = [Math]::Round($result.voice.Seconds, 1) }
+      if ($r.farewell) { Start-FarewellWaiter $r.path }
+    } catch { Emit @{ t = 'rendered'; id = $r.id; ok = $false; why = "$_" } }
+  }
+}
+
+# The farewell (decision 4): a small process outside Claude Code's process tree (started
+# through WMI, so Claude Code's exit does not take it along) waits for Claude Code to end,
+# then plays the pre-rendered last word and stops hard after 6 s. One per Claude Code.
+$script:claudePid = [HalNative]::ParentPid()
+function Start-FarewellWaiter([string]$wav) {
+  if ($script:farewellWaiter -or $script:claudePid -le 0) { return }
+  $waiter = Join-Path $PSScriptRoot 'hal-farewell.ps1'
+  $exe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $line = "`"$exe`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$waiter`" -Wav `"$wav`" -WatchPid $($script:claudePid)"
+  try {
+    $made = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $line }
+    if ($made.ReturnValue -eq 0) { $script:farewellWaiter = $made.ProcessId } else { Emit @{ t = 'error'; why = "farewell: WMI returned $($made.ReturnValue)" } }
+  } catch { Emit @{ t = 'error'; why = "farewell: $_" } }
+}
+
+# ---------- the desk: a fullscreen app, another app on the microphone ----------
+$script:desk = @{ fullscreen = $false; micBusy = ''; checkedAt = 0 }
+$script:ownPythons = @()
+foreach ($exe in @($neuralPython, (Join-Path $env:LOCALAPPDATA 'hal\venv\Scripts\pythonw.exe'))) { $script:ownPythons += $exe }
+try {
+  $cfg = Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'hal\venv\pyvenv.cfg') -ErrorAction Stop | Where-Object { $_ -match '^\s*home\s*=' }
+  if ($cfg) { $script:ownPythons += (Join-Path (($cfg -split '=', 2)[1].Trim()) 'python.exe') }
+} catch { }
+$script:ownPythons = @($script:ownPythons | ForEach-Object { ($_ -replace '\\', '#').ToLowerInvariant() })
+
+function Read-Desk {
+  # HAL's own haze is a maximised topmost window: Windows would call that fullscreen.
+  if ($script:S.phase -ne 'idle') { return }
+  if ((NowMs) - $script:desk.checkedAt -lt 2000) { return }
+  $script:desk.checkedAt = NowMs
+  $full = [HalNative]::IsFullscreen()
+  $mic = [HalNative]::MicUser([string[]]$script:ownPythons)
+  if ($full -ne $script:desk.fullscreen -or $mic -ne $script:desk.micBusy) {
+    $script:desk.fullscreen = $full; $script:desk.micBusy = $mic
+    Emit @{ t = 'desk'; fullscreen = $full; micBusy = [bool]$mic }
+  }
+}
 
 # ---------- the ears: hal-ears.py, while the mod asks HAL to listen ----------
 # Their lines go to stdout as they are; the host only gates them while HAL speaks.
@@ -1035,6 +1226,8 @@ function Get-Report {
     lastSynthMs = $script:S.lastSynthMs; lastLatencyMs = $script:S.lastLatencyMs; lastHazeCpuPct = $script:S.lastCpuPct
     queued = $script:S.queue.Count; phase = $script:S.phase
     ears = $script:earsState
+    lastGlowCpuPct = $script:S.lastGlowCpuPct
+    fullscreen = $script:desk.fullscreen; micBusy = [bool]$script:desk.micBusy
   }
 }
 
@@ -1057,6 +1250,15 @@ function Read-Inbox {
         $script:earsWanted = [bool]$msg.on
         if ($script:earsWanted) { $script:earsStarts = @(); Start-Ears; if ($msg.override) { Send-Ears '{"override": true}' } } else { Stop-Ears }
       }
+      'glow' { Set-Glow ([bool]$msg.on) }
+      'render' {
+        $path = [string]$msg.path
+        if ($msg.farewell) { $path = Join-Path $env:LOCALAPPDATA "hal\farewell-$($script:claudePid).wav" }
+        $job = Start-Voice ([string]$msg.text) ([string]$msg.id)
+        if ($job) { [void]$script:renders.Add(@{ id = [string]$msg.id; path = $path; job = $job; at = (NowMs); farewell = [bool]$msg.farewell }) }
+        else { Emit @{ t = 'rendered'; id = $msg.id; ok = $false; why = 'no voice' } }
+      }
+      'farewell-cancel' { Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA "hal\farewell-$($script:claudePid).wav") -Force -ErrorAction SilentlyContinue }
       'quit' { [System.Windows.Threading.Dispatcher]::CurrentDispatcher.InvokeShutdown() }
     }
   }
@@ -1068,6 +1270,8 @@ $poll.Add_Tick({
     try {
       Read-Inbox
       Read-Ears
+      Read-Desk
+      if ($script:renders.Count -gt 0) { Read-Renders }
       if ($script:S.phase -eq 'idle' -and $script:S.queue.Count -gt 0) { Start-Next }
     } catch { Emit @{ t = 'error'; why = "$_" } }
   })
@@ -1082,4 +1286,5 @@ if ($isOneShot) {
 [System.Windows.Threading.Dispatcher]::Run()
 if ($neural) { $neural.Stop() }
 if ($script:ears) { $script:ears.Stop() }
+foreach ($w in $script:glow.windows) { try { $w.Close() } catch { } }
 if ($script:hostMutex) { try { $script:hostMutex.ReleaseMutex() } catch { } }

@@ -27,6 +27,8 @@ declare module 'claude-code' {
       ears: string
       /** What HAL heard you say to him, shown in the band before it is sent. */
       said: string
+      /** The session id of the visit in progress: a reload is not a new visit. */
+      visit: string
     }
   }
 }

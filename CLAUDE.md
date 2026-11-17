@@ -13,8 +13,8 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 
 ## Layout
 
-- `hooks/register.tsx` the mod · `persona.ts` character text, style filter, commands · `mood.ts` mood and signals · `gaze.ts` where the eye looks · `eye.ts` the band and pane eye in half-block pixels · `ears.ts` what the mod does with what HAL hears · `hal.test.tsx` tests.
-- `assets/hal-host.ps1` one process per PC: voice, processing chain, haze windows, choreography; inbox `%LOCALAPPDATA%\hal\inbox` in, JSON lines on stdout out. `assets/hal-voice.py` + `hal_piper.py` the warm neural voice (Piper `kestrin`; `hal_kokoro.py` for Kokoro `am_michael` when kestrin is missing). `assets/hal-ears.py` the ears (mic + loopback, VAD, Whisper), started by the host while the mod asks HAL to listen. `assets/hal.ps1` one line from a shell.
+- `hooks/register.tsx` the mod · `persona.ts` character text, style filter, commands · `mood.ts` mood and signals · `gaze.ts` where the eye looks · `eye.ts` the band and pane eye in half-block pixels · `ears.ts` what the mod does with what HAL hears · `dossier.ts` the notes and the fact block · `moments.ts` HAL's own lines (reception, waking, initiative, farewell) and when he may speak unprompted · `hal.test.tsx` and `units.test.ts` tests.
+- `assets/hal-host.ps1` one process per PC: voice, processing chain, haze windows, choreography; inbox `%LOCALAPPDATA%\hal\inbox` in, JSON lines on stdout out. `assets/hal-voice.py` + `hal_piper.py` the warm neural voice (Piper `kestrin`; `hal_kokoro.py` for Kokoro `am_michael` when kestrin is missing). `assets/hal-ears.py` the ears (mic + loopback, VAD, Whisper), started by the host while the mod asks HAL to listen. `assets/hal-farewell.ps1` the last word, started through WMI by the host. `assets/hal.ps1` one line from a shell.
 - `tools/setup-voice.ps1` voice + Python environment · `tools/listening_test.py` the blind test.
 - Models and the venv live in `%LOCALAPPDATA%\hal`, never in the repo. The kestrin model is a GitHub release asset (`voice-kestrin`); `setup-voice.ps1` pins its SHA-256.
 
@@ -43,3 +43,8 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 - The heard words never go to `$.ui.log` (the debug log is a file) or `$.store`.
 - A mod cannot hear Esc at an idle prompt; `$.prompt.fill` + `$.prompt.read` give the person the last word instead.
 - `$.process.spawn` has no live stdin: anything that needs one (the voice, the ears) is a child of the host.
+- Never write a patch through a Bash heredoc: backslashes arrive halved, so `\\v` and `\\f` became a vertical tab and a form feed in the host. Write the patch script to a file first.
+- Claude Code's exit takes its process tree along: the farewell waiter is created through WMI (`Win32_Process.Create`), so its parent is WmiPrvSE.
+- HAL's own haze is a maximised topmost window, which `SHQueryUserNotificationState` reports as fullscreen: the host does not read the desk while HAL is on screen.
+- In tests `$.store` is not reachable from the test's `$`: seed it with `mock.store(on, entries)` and read results through the mod's own commands (`/hal dossier`).
+- A test's `$` needs answers for every engine call the mod makes: `session.id`, `model.complete`, `process.run` (git status), `fs.write`.

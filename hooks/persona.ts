@@ -241,6 +241,8 @@ export type HalAction =
   | { kind: 'deaf' }
   | { kind: 'mic'; value: string }
   | { kind: 'check' }
+  | { kind: 'settings' }
+  | { kind: 'dossier' }
   | { kind: 'help' }
   | { kind: 'bad'; why: string }
 
@@ -300,6 +302,11 @@ export function parseCommand(args: string): HalAction {
       return { kind: 'mic', value: lowered === 'auto' ? '' : value }
     case 'check':
       return { kind: 'check' }
+    case 'settings':
+      return { kind: 'settings' }
+    case 'dossier':
+    case 'notes':
+      return { kind: 'dossier' }
     case 'help':
     case '?':
       return { kind: 'help' }
@@ -343,8 +350,10 @@ export function describe(s: HalSettings, level: HalLevel): string {
   ].join('\n')
 }
 
-export const HELP = `/hal                      wake HAL, or show the settings when he is awake
+export const HELP = `/hal                      wake HAL, or put him to sleep
 /hal off                  HAL sleeps; Claude talks normally again
+/hal settings             the knobs below, as they are set
+/hal dossier              his notes: what the hooks counted
 /hal ceiling 1-3          how far HAL's mood may rise (it moves by itself)
 /hal talk often|sometimes|rarely|never
 /hal haze on|off          the haze over the screen, or the voice alone

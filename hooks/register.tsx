@@ -2,11 +2,25 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { HalLevel, HalMood, HalSettings } from '../types'
+import {
+  beginVisit,
+  bookkeeping,
+  describeDossier,
+  endVisit,
+  factBlock,
+  localDay,
+  parseGit,
+  readDossier,
+  receptionKind,
+} from './dossier'
+import type { Dossier, Git, Moment, Visit } from './dossier'
 import { addressed, hearsName, isSalient, keep, remarkFrom, shouldWeigh, tally, weighRequest } from './ears'
-import type { Heard, ReflectState, Source } from './ears'
+import type { Heard, HeardTally, ReflectState, Source } from './ears'
 import { bandCells, eyeCells } from './eye'
 import { lookFrom, newGazeState, stepGazeState, toolKind } from './gaze'
 import type { Attention, ToolKind } from './gaze'
+import { INITIATIVE_GAP_MS, initiative, momentRequest, newWatch, noteTest, testKey } from './moments'
+import type { Occasion, Watch } from './moments'
 import { isForcePush, isLateHour, moodLevel, moveMood, returnMood } from './mood'
 import type { MoodEvent } from './mood'
 import {
@@ -15,7 +29,6 @@ import {
   OFF_NOTE,
   describe,
   describeCheck,
-  greeting,
   judgeLine,
   lastSpokenLine,
   mentionsName,
@@ -24,7 +37,6 @@ import {
   persona,
   reminder,
   speakable,
-  statusText,
   testLine,
 } from './persona'
 
@@ -44,6 +56,8 @@ const levelAtom = atom({ plugin: 'hal', key: 'level' } as const, 2 as HalLevel)
 const lineAtom = atom({ plugin: 'hal', key: 'line' } as const, '')
 const earsAtom = atom({ plugin: 'hal', key: 'ears' } as const, 'off')
 const saidAtom = atom({ plugin: 'hal', key: 'said' } as const, '')
+/** The session this visit belongs to: a reload of the mod is not a new visit. */
+const visitAtom = atom({ plugin: 'hal', key: 'visit' } as const, '')
 
 type $ = EngineInterface
 
@@ -84,8 +98,22 @@ let saidSerial = 0
 let spokenPrompt: string | undefined
 /** What the model must know with the next prompt: what HAL said unprompted. */
 let notes: string[] = []
-let awakeSince = 0
 let projectName = ''
+
+// The host's notes (dossier.ts) and what HAL watches for his own initiative (moments.ts).
+let dossier: Dossier | undefined
+let visitId = ''
+let git: Git
+let watch: Watch = newWatch()
+let watchTimer: { cancel: () => void } | undefined
+/** A fullscreen app; another app holding the microphone (then HAL does not speak aloud). */
+let desk = { fullscreen: false, micBusy: false }
+/** Decided at session.start, done once HAL's process is ours: one house, one host. */
+let pendingReception: 'full' | 'look' | undefined
+let farewellAt = -Infinity
+let isFarewellBusy = false
+/** One sharp detail from the notes, at most once per session. */
+let isDetailUsed = false
 
 // HAL's one process per PC (assets/hal-host.ps1). This session either owns it
 // (and reads its stdout) or another session does (then only the inbox is shared).
@@ -178,7 +206,7 @@ async function shiftMood($: $, event: MoodEvent) {
   const level = await currentLevel($, settings)
   await update($, levelAtom, () => level)
   if (settings.isOn) {
-    $.ui.status(statusText(settings, level))
+    await showStatus($)
   }
 }
 
@@ -254,11 +282,26 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
   }
   switch (message.t) {
     case 'busy':
+      // Another session's process: it received the guest already.
+      pendingReception = undefined
       return 'busy'
     case 'ready':
       if (typeof message.pid === 'number') {
         isHostOwner = true
         await askEars($, await read($, settingsAtom), false)
+        if (pendingReception) {
+          const kind = pendingReception
+          pendingReception = undefined
+          void receive($, kind).catch(() => undefined)
+        }
+      }
+      break
+    case 'desk':
+      desk = { fullscreen: message.fullscreen === true, micBusy: message.micBusy === true }
+      break
+    case 'rendered':
+      if (message.ok !== true) {
+        $.ui.log(`hal: the farewell was not rendered (${String(message.why)})`, { to: 'debug' })
       }
       break
     case 'ears': {
@@ -292,10 +335,16 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       isAway = false
       await setMood($, 'idle')
       lookAtYou()
+      if (message.why === 'interrupted') {
+        await touch($, v => ({ ...v, interrupted: v.interrupted + 1 }))
+      }
       break
     case 'dropped':
       isAway = false
       await setMood($, 'idle')
+      if (String(message.why).startsWith('typing')) {
+        await touch($, v => ({ ...v, interrupted: v.interrupted + 1 }))
+      }
       $.ui.log(`hal: a line was dropped (${String(message.why)})`, { to: 'debug' })
       break
     case 'check': {
@@ -366,7 +415,8 @@ function startHost($: $) {
     return
   }
   isHostRunning = true
-  void runHost($)
+  // A module that unloads mid-run (a reload, the end of a test) may find $ gone: let it go.
+  void runHost($).catch(() => undefined)
 }
 
 async function ensureHost($: $) {
@@ -429,20 +479,197 @@ async function today($: $): Promise<string> {
   return new Date((await $.clock.now()) + (utcOffsetMinutes ?? 0) * 60_000).toISOString().slice(0, 10)
 }
 
-/** Facts the model may use; the dossier (step 6) will add to them. Never the words heard. */
-async function facts($: $, level: HalLevel): Promise<string[]> {
+// ---------- the dossier: true counts, per machine ----------
+
+async function saveDossier($: $) {
+  if (dossier) {
+    await $.store.set('dossier', dossier)
+  }
+}
+
+function currentVisit(): Visit | undefined {
+  return dossier?.open[visitId]
+}
+
+/** Counts something in this visit and keeps it. */
+async function touch($: $, change: (v: Visit) => Visit) {
+  const visit = currentVisit()
+  if (!dossier || !visit) {
+    return
+  }
   const now = await $.clock.now()
-  const local = new Date(now + (utcOffsetMinutes ?? 0) * 60_000)
-  const time = `${String(local.getUTCHours()).padStart(2, '0')}:${String(local.getUTCMinutes()).padStart(2, '0')}`
+  dossier = { ...dossier, open: { ...dossier.open, [visitId]: { ...change(visit), last: now } } }
+  await saveDossier($)
+}
+
+/** `git status`, read only: counts, the branch, at most three file names. Never contents. */
+async function readGit($: $) {
+  try {
+    const { exitCode, stdout } = await $.process.run(['git', 'status', '--porcelain=v1', '--branch'], { timeoutMs: 8000 })
+    git = exitCode === 0 ? parseGit(stdout) : undefined
+  } catch {
+    git = undefined
+  }
+}
+
+async function heardToday($: $): Promise<{ mic: number; loop: number }> {
+  const all = (await $.store.get('heard')) as HeardTally | undefined
+
+  return all?.[await today($)] ?? { mic: 0, loop: 0 }
+}
+
+async function moment($: $): Promise<Moment | undefined> {
+  const visit = currentVisit()
+  if (!visit) {
+    return undefined
+  }
+
+  return {
+    now: await $.clock.now(),
+    offsetMinutes: utcOffsetMinutes ?? 0,
+    visit,
+    git,
+    heardTodaySec: await heardToday($),
+    project: projectName,
+  }
+}
+
+/** The fact block: what HAL may name. Never the words heard. */
+async function facts($: $, level: HalLevel): Promise<string[]> {
+  const m = await moment($)
+  const block = dossier && m ? factBlock(dossier, m) : []
   const room = heard.filter(h => h.src === 'mic').reduce((sum, h) => sum + h.sec, 0)
   const computer = heard.filter(h => h.src === 'loop').reduce((sum, h) => sum + h.sec, 0)
 
   return [
-    `Local time ${time}.`,
-    projectName ? `The guest is working in the folder "${projectName}".` : 'The project folder is unknown.',
-    `HAL has been awake for ${Math.max(0, Math.round((now - awakeSince) / 60_000))} minutes this session; mood level ${level}.`,
-    `Speech in the last five minutes: ${Math.round(room)} s from the room, ${Math.round(computer)} s from the computer.`,
+    ...block,
+    `HAL's mood: level ${level}.`,
+    ...(room + computer > 0 ? [`Speech in the last five minutes: ${Math.round(room)} s in the room, ${Math.round(computer)} s from the computer.`] : []),
   ]
+}
+
+/** The status line as bookkeeping: `◉ HAL · inside since 21:04 · visit 37 · read 37 · commands 12`. */
+async function showStatus($: $) {
+  const settings = await read($, settingsAtom)
+  const visit = currentVisit()
+  if (!settings.isOn) {
+    $.ui.status(undefined)
+
+    return
+  }
+  $.ui.status(dossier && visit ? bookkeeping(dossier, visit, utcOffsetMinutes ?? 0) : '◉ HAL')
+}
+
+/** One of HAL's own lines, written by the model from the facts; undefined for silence. */
+async function ownLine($: $, occasion: Occasion, why?: string): Promise<string | undefined> {
+  const settings = await read($, settingsAtom)
+  const level = await currentLevel($, settings)
+  const offs = occasion === 'reception' ? (dossier?.offsSinceReception.length ?? 0) : 0
+  const { system, prompt } = momentRequest({ occasion, why, facts: await facts($, level), recent, level, name: settings.name, offs })
+  const reply = await $.model.complete({ model: 'haiku', system, prompt, maxTokens: 80, effort: 'low', timeoutMs: 20_000 })
+  if (!reply.isAnswered) {
+    $.ui.log(`hal: no ${occasion} line (${reply.reason})`, { to: 'debug' })
+
+    return undefined
+  }
+  const line = remarkFrom(reply.text)
+  if (!line) {
+    return undefined
+  }
+  const verdict = judgeLine(line, { recent, name: settings.name, isNameUsed })
+  if (!verdict.isOk) {
+    $.ui.log(`hal: the ${occasion} line broke the style rules (${verdict.why})`, { to: 'debug' })
+
+    return undefined
+  }
+
+  return line
+}
+
+/** The reception: the first visit of the day gets the full haze; later only the band's eye looks up. */
+async function receive($: $, kind: 'full' | 'look') {
+  const settings = await read($, settingsAtom)
+  lookAtYou(1800)
+  if (kind === 'look' || settings.talk === 'never' || !dossier) {
+    return
+  }
+  const line = await ownLine($, 'reception')
+  dossier = { ...dossier, receptionDay: localDay(await $.clock.now(), utcOffsetMinutes ?? 0) }
+  if (line) {
+    // The switch-offs were named, once.
+    dossier = { ...dossier, offsSinceReception: [] }
+    await remember($, line, settings)
+    notes.push(`HAL received the guest aloud at the start of this visit: "${line}". Do not repeat it.`)
+    await speak($, line, settings, 'moment', false)
+  }
+  await saveDossier($)
+}
+
+/**
+ * The farewell, rendered ahead after twenty minutes and again at most every ten: HAL's process
+ * keeps it as a wav, and a waiter outside Claude Code plays it after Claude Code has ended.
+ */
+async function prepareFarewell($: $) {
+  const settings = await read($, settingsAtom)
+  const visit = currentVisit()
+  const now = await $.clock.now()
+  if (!visit || isFarewellBusy || !isHostOwner || settings.talk === 'never' || now - visit.start < 20 * 60_000 || now - farewellAt < 10 * 60_000) {
+    return
+  }
+  isFarewellBusy = true
+  try {
+    farewellAt = now
+    const line = await ownLine($, 'farewell')
+    if (line) {
+      messageCount += 1
+      await send($, { kind: 'render', id: `farewell-${messageCount}`, text: speakable(line), farewell: true })
+    }
+  } finally {
+    isFarewellBusy = false
+  }
+}
+
+/** Once a minute: is something true enough to say unprompted? Never more than once per 45 minutes. */
+async function checkInitiative($: $) {
+  const settings = await read($, settingsAtom)
+  const now = await $.clock.now()
+  if (!settings.isOn || settings.talk === 'never' || !isHostOwner || mood !== 'idle') {
+    return
+  }
+  if (now - watch.lastInitiativeAt < INITIATIVE_GAP_MS || clock - lastEditAt < 10_000 || desk.fullscreen || desk.micBusy) {
+    return
+  }
+  const offset = utcOffsetMinutes ?? 0
+  const local = new Date(now + offset * 60_000)
+  // The night belongs to the evening it started on.
+  const night = localDay(now - 4 * 3_600_000, offset)
+  const found = initiative(watch, now, local.getUTCHours() * 60 + local.getUTCMinutes(), night)
+  if (!found) {
+    return
+  }
+  watch = { ...watch, ...found.mark, lastInitiativeAt: now }
+  await $.store.set('initiativeAt', now)
+  const line = await ownLine($, 'initiative', found.why)
+  if (!line || clock - lastEditAt < 4000 || mood !== 'idle') {
+    // The silent form: only the band's eye brightens and looks at you.
+    lookAtYou(2500)
+
+    return
+  }
+  await remember($, line, settings)
+  notes.push(`HAL said aloud, unprompted, because ${found.why}: "${line}". Do not repeat it.`)
+  await speak($, line, settings, 'moment', (await currentLevel($, settings)) === 3)
+}
+
+function startWatch($: $) {
+  if (!watchTimer) {
+    watchTimer = $.clock.every(60_000, () => void checkInitiative($).catch(() => undefined))
+  }
+}
+
+function stopWatch() {
+  watchTimer?.cancel()
+  watchTimer = undefined
 }
 
 async function onHeard($: $, src: Source, text: string, sec: number) {
@@ -567,6 +794,12 @@ type Weight =
 
 /** HAL speaks: the line goes to HAL's process, which speaks it and, at real moments, lays the haze. */
 async function speak($: $, text: string, settings: HalSettings, weight: Weight, isUncomfortable: boolean) {
+  // Another app holds the microphone (a call): HAL does not speak aloud over it.
+  if (desk.micBusy && weight !== 'test') {
+    $.ui.log('hal: kept silent, another app holds the microphone', { to: 'debug' })
+
+    return
+  }
   const level = await currentLevel($, settings)
   let haze = false
   if (settings.haze) {
@@ -574,6 +807,10 @@ async function speak($: $, text: string, settings: HalSettings, weight: Weight, 
   }
   await update($, lineAtom, () => text)
   await ensureHost($)
+  if (/\d|\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|hundred)\b/i.test(text)) {
+    isDetailUsed = true
+  }
+  await touch($, v => ({ ...v, spoken: v.spoken + 1 }))
   messageCount += 1
   await send($, {
     kind: 'say',
@@ -624,17 +861,24 @@ async function remember($: $, line: string, settings: HalSettings) {
 async function wake($: $, settings: HalSettings, shouldGreet: boolean) {
   const level = await currentLevel($, settings)
   await update($, levelAtom, () => level)
-  $.ui.status(statusText(settings, level))
+  await showStatus($)
   startEye($)
+  startWatch($)
   if (settings.pane) {
     void $.ui.open({ id: PANE, title: 'HAL' })
   }
   await ensureHost($)
-  awakeSince = await $.clock.now()
   await askEars($, settings, false)
   lookAtYou()
   if (shouldGreet && settings.talk !== 'never') {
-    await speak($, greeting(Math.random), settings, 'moment', false)
+    // No fixed greeting: one line from what is true now, or only the eye.
+    void (async () => {
+      const line = await ownLine($, 'woken')
+      if (line) {
+        await remember($, line, settings)
+        await speak($, line, settings, 'moment', false)
+      }
+    })().catch(() => undefined)
   }
 }
 
@@ -642,9 +886,12 @@ async function sleep($: $) {
   // Switching off is immediate: no confirmation, no last remark.
   $.ui.status(undefined)
   stopEye()
+  stopWatch()
   await $.ui.close({ id: PANE }).catch(() => undefined)
   hearing = { mic: false, loop: false }
   heard = []
+  await send($, { kind: 'farewell-cancel' })
+  await send($, { kind: 'glow', on: false })
   if (isHostOwner) {
     await send($, { kind: 'quit' })
   } else {
@@ -665,10 +912,28 @@ export const register: Register = on => {
       argumentHint: '[on|off|ceiling 1-3|talk often|sometimes|rarely|never|haze on|off|eye on|off|name|say|check|help]',
     })
     isNameUsed = false
+    isDetailUsed = false
     projectName = e.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? ''
     await readUtcOffset($)
     const settings = await load($)
+    const now = await $.clock.now()
+    const storedInitiative = await $.store.get('initiativeAt')
+    watch = { ...newWatch(), lastInitiativeAt: typeof storedInitiative === 'number' ? storedInitiative : -Infinity, lastActivityAt: now }
+    // A visit: this session's first start. A reload of the mod keeps the visit it was in.
+    dossier = readDossier(await $.store.get('dossier'), now)
+    const known = await read($, visitAtom)
+    const isReload = known !== '' && dossier.open[known] !== undefined
+    visitId = isReload ? known : await $.session.id()
+    let reception: 'full' | 'look' | undefined
+    if (!isReload) {
+      reception = e.isInteractive ? receptionKind(dossier, now, utcOffsetMinutes ?? 0) : undefined
+      dossier = beginVisit(dossier, visitId, now)
+      await update($, visitAtom, () => visitId)
+      await saveDossier($)
+    }
+    await readGit($)
     if (settings.isOn && e.isInteractive) {
+      pendingReception = reception
       await wake($, settings, false)
     }
 
@@ -679,8 +944,13 @@ export const register: Register = on => {
   on('session.end', async ($, e, next) => {
     const ended = await next(e)
     if (e.reason === 'clear') {
+      // /clear is not a visit: the visit goes on.
       hasSentPersona = false
       isNameUsed = false
+      isDetailUsed = false
+    } else if (dossier) {
+      dossier = endVisit(dossier, visitId, 'exit')
+      await saveDossier($)
     }
 
     return ended
@@ -702,28 +972,39 @@ export const register: Register = on => {
 
     switch (action.kind) {
       case 'help':
+        return { text: HELP }
+      case 'settings':
         return { text: `${describe(current, level)}\n\n${HELP}` }
+      case 'dossier': {
+        const m = await moment($)
+
+        return { text: dossier && m ? describeDossier(dossier, m) : 'My notes are empty on this machine.' }
+      }
       case 'bad':
         return { text: `${action.why}\n\n${HELP}` }
       case 'toggle':
-      case 'on': {
-        if (current.isOn && action.kind === 'toggle') {
-          return { text: `${describe(current, level)}\n\n/hal help lists all options.` }
-        }
-        const next = { ...current, isOn: true }
-        await save($, next)
-        hostRestarts = 0
-        await wake($, next, true)
-        hasSentPersona = true
-
-        return {
-          text: `◉ HAL is awake.\n${describe(next, level)}`,
-          context: [persona(next, await context($, next))],
-        }
-      }
+      case 'on':
       case 'off': {
-        const next = { ...current, isOn: false }
+        // /hal alone switches: no table. The knobs live under /hal settings.
+        const isOn = action.kind === 'toggle' ? !current.isOn : action.kind === 'on'
+        if (isOn === current.isOn) {
+          return { text: isOn ? '◉ HAL is awake.' : 'HAL is asleep.' }
+        }
+        const next = { ...current, isOn }
         await save($, next)
+        if (isOn) {
+          hostRestarts = 0
+          await wake($, next, true)
+          hasSentPersona = true
+
+          return { text: '◉ HAL is awake.', context: [persona(next, await context($, next))] }
+        }
+        // Switching off is immediate; it counts for the dossier, not for the mood.
+        if (dossier) {
+          const now = await $.clock.now()
+          dossier = { ...dossier, halOff: dossier.halOff + 1, offsSinceReception: [...dossier.offsSinceReception, now] }
+          await saveDossier($)
+        }
         await sleep($)
         hasSentPersona = false
 
@@ -735,10 +1016,14 @@ export const register: Register = on => {
       case 'name': {
         const next: HalSettings = { ...current, [action.kind]: action.value }
         await save($, next)
+        if (action.kind === 'haze' && !action.value && current.haze && dossier) {
+          dossier = { ...dossier, hazeOff: dossier.hazeOff + 1 }
+          await saveDossier($)
+        }
         const nextLevel = await currentLevel($, next)
         await update($, levelAtom, () => nextLevel)
         if (next.isOn) {
-          $.ui.status(statusText(next, nextLevel))
+          await showStatus($)
           hasSentPersona = true
         }
 
@@ -773,7 +1058,7 @@ export const register: Register = on => {
           action.kind === 'mic' ? { ...current, mic: action.value } : { ...current, listen: action.kind === 'listen' }
         await save($, next)
         if (next.isOn) {
-          $.ui.status(statusText(next, level))
+          await showStatus($)
           await ensureHost($)
         }
         await askEars($, next, action.kind === 'listen')
@@ -799,8 +1084,9 @@ export const register: Register = on => {
   })
 
   // Typing: the eye reads along.
-  on('prompt.edit', ($, e, next) => {
+  on('prompt.edit', async ($, e, next) => {
     lastEditAt = clock
+    watch = { ...watch, lastActivityAt: await $.clock.now() }
 
     return next(e)
   })
@@ -821,9 +1107,20 @@ export const register: Register = on => {
     if (!settings.isOn) {
       return next(e)
     }
+    const now = await $.clock.now()
+    watch = { ...watch, lastPromptAt: now, lastActivityAt: now }
     const ctx = await context($, settings)
     const note = hasSentPersona ? reminder(settings, ctx) : persona(settings, ctx)
     hasSentPersona = true
+    // The fact block: true counts; the spoken line may name only these numbers and names.
+    const block = await facts($, ctx.level)
+    if (block.length > 0) {
+      extra.push(
+        `HAL's notes (true counts from the hooks; a spoken line names only numbers and names from here, never invents one${
+          isDetailUsed ? '; one sharp detail from the notes was already named this session: no more' : '; one sharp detail from them, at most once this session'
+        }):\n${block.map(f => `- ${f}`).join('\n')}`,
+      )
+    }
     extra.push(...notes)
     notes = []
 
@@ -844,7 +1141,24 @@ export const register: Register = on => {
     if (!settings.isOn) {
       return ran
     }
-    if ('isError' in ran && ran.isError) {
+    const isFailure = 'isError' in ran && ran.isError === true
+    const kind = toolKind(String(e.tool))
+    const now = await $.clock.now()
+    await touch($, v => ({
+      ...v,
+      reads: v.reads + (kind === 'read' ? 1 : 0),
+      writes: v.writes + (kind === 'write' ? 1 : 0),
+      commands: v.commands + (kind === 'command' ? 1 : 0),
+      failures: v.failures + (isFailure ? 1 : 0),
+    }))
+    watch = { ...watch, lastActivityAt: now, ...(isFailure ? { lastErrorAt: now } : {}) }
+    if (e.tool === 'Bash' || e.tool === 'PowerShell') {
+      const key = testKey(String(e.command))
+      if (key) {
+        watch = noteTest(watch, key, isFailure)
+      }
+    }
+    if (isFailure) {
       hadFailureThisTurn = true
       lookAtYou()
       await shiftMood($, 'failure')
@@ -852,6 +1166,7 @@ export const register: Register = on => {
     if (e.tool === 'Bash' && isForcePush(e.command)) {
       await shiftMood($, 'forcePush')
     }
+    await showStatus($)
 
     return ran
   })
@@ -860,9 +1175,11 @@ export const register: Register = on => {
     const started = await next(e)
     if (e.agentId === undefined) {
       hadFailureThisTurn = false
-      if (mood !== 'speaking') {
-        const settings = await read($, settingsAtom)
-        if (settings.isOn) {
+      const settings = await read($, settingsAtom)
+      if (settings.isOn) {
+        // The edge glow: the house works while you wait (decision 3).
+        await send($, { kind: 'glow', on: true })
+        if (mood !== 'speaking') {
           await setMood($, 'working')
         }
       }
@@ -883,8 +1200,17 @@ export const register: Register = on => {
     if (!settings.isOn) {
       return done
     }
+    await send($, { kind: 'glow', on: false })
+    void readGit($)
+      .then(() => prepareFarewell($))
+      .catch(() => undefined)
     if (e.reason === 'aborted') {
       await shiftMood($, 'abort')
+      await touch($, v => ({ ...v, escapes: v.escapes + 1 }))
+      const escapes = currentVisit()?.escapes ?? 1
+      notes.push(
+        `The guest pressed Esc and cut HAL's last answer off (${escapes} time${escapes === 1 ? '' : 's'} this visit). Name it once, factually, and go on with the work.`,
+      )
     } else if (e.reason === 'answer' && !hadFailureThisTurn) {
       await shiftMood($, 'calmTurn')
     }
