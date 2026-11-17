@@ -1,0 +1,5 @@
+.claude-plugin/types/
+*.log
+notes/
+__pycache__/
+*.pyc
