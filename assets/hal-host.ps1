@@ -1012,6 +1012,9 @@ $script:anim.Add_Tick({
           }
           if ($u -ge $seconds) {
             Emit @{ t = 'level'; v = 0 }
+            # His voice is done: the ears open now (with their own 300 ms tail), not after the
+            # stare. A guest answers right away; two seconds of deaf staring lost their words.
+            Send-Ears '{"gate": false}'
             $S.phase = 'stare'; $S.stareStart = $t; $S.stareLength = 2.0
           }
         }

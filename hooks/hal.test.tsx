@@ -109,7 +109,7 @@ test('/hal learn: he leads the way by voice, the ears count, and he answers his 
   const lines = said(sent)
   expect(lines).toContain('Say my name. Only my name.')
   expect(lines).toContain('Now the word that sends me away. Say stop.')
-  expect(lines).toContain('Enough. Now say something else. Anything of your own.')
+  expect(lines).toContain('That is enough. Now say something else. Anything of your own.')
   expect(lines).toContain('Five of five. I know how you say my name now. Say it, and I will come.')
   // His name alone, after learning: a conversation opens, the eye comes with his first words.
   const open = sent.find(m => m.kind === 'presence' && m.on === true)

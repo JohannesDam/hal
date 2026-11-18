@@ -68,16 +68,17 @@ export function bandFor(learn: Learn): string {
   }
 }
 
-const AGAIN = ['Again.', 'Once more.', 'Again. The same way.', 'One more time.']
+// No line opens on a weak vowel: the voice swallows it ("Again." came out as "gain").
+const AGAIN = ['Once more.', 'The same way. Once more.', 'Say it again.', 'One more time.']
 
 /** What HAL says at each step. Plain lines: no haze, not kept among his remarks. */
 export const lineFor = {
   start: 'Say my name. Only my name.',
-  again: (got: number) => AGAIN[(got - 1) % AGAIN.length] ?? 'Again.',
+  again: (got: number) => AGAIN[(got - 1) % AGAIN.length] ?? 'Once more.',
   toStop: 'Now the word that sends me away. Say stop.',
-  stopAgain: 'Again.',
-  toOther: 'Enough. Now say something else. Anything of your own.',
-  otherAgain: 'Another one.',
+  stopAgain: 'Once more.',
+  toOther: 'That is enough. Now say something else. Anything of your own.',
+  otherAgain: 'One more.',
   result: (r: Learned): string => {
     if (r.ok === false && (r.caught === undefined || r.of === undefined)) {
       return 'I heard too little of you. We will do this again.'
