@@ -38,7 +38,7 @@ class Sentences(unittest.TestCase):
             self.assertFalse(self.name.is_wake(text), text)
 
     def test_sleep_and_stop_end_it(self):
-        for text in ["Hell, go to sleep.", "Go to sleep.", "Stop.", "stopp", "Stoppen!"]:
+        for text in ["Hell, go to sleep.", "Go to sleep.", "Stop.", "stopp", "Stoppen!", "Oh, ga te sleepen.", "HAL, ga slapen."]:
             self.assertTrue(self.name.is_stop(text), text)
         for text in ["Top.", "Stop the build.", "The kids did not want to go to sleep last night at all.", "[BLANK_AUDIO]"]:
             self.assertFalse(self.name.is_stop(text), text)

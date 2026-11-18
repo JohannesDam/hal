@@ -33,7 +33,8 @@ STOP_SHAPES = ["stop", "stopp", "stoppen", "stap", "stob"]
 NOT_STOP = {"top", "shop", "step"}
 # The sentences, however the name comes out. Short utterances only.
 WAKE_RE = re.compile(r"\bwake\s*up\b|\bwakker\b", re.I)
-SLEEP_RE = re.compile(r"\bgo to sleep\b|\bsleep now\b|\bga slapen\b", re.I)
+# "Oh, ga te sleepen." is how one Dutch voice came out of "HAL, go to sleep".
+SLEEP_RE = re.compile(r"\bgo t[oe] sleep\b|\bsleep now\b|\bga (?:te |maar )?sl(?:a|ee)pen\b", re.I)
 MAX_PHRASE_WORDS = 7
 # How close a later sentence must be to one the guest taught him (difflib ratio).
 LIKE = 0.75

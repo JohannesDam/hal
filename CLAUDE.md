@@ -56,6 +56,8 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 - Piper swallows a weak opening vowel ("Again." sounds like "gain"): his short lines start on a strong syllable.
 - The VAD opens a segment only once it is sure of a voice: the first word's start is lost. Microphone segments get 0.3 s of pre-roll (`with_pre_roll`); the VAD's sample index restarts at every `reset()`, so the ears' own count restarts with it.
 - Whisper labels a short English sentence in a Dutch voice as German or Afrikaans now and then: a plain wake or sleep sentence is not dropped for its language (`call_despite_language`).
+- WPF will not `Show()` a hidden window that is still `Maximized` when `ShowActivated` is false: set `WindowState = 'Normal'`, show, then maximise. Until 0.6.4 only the first haze of a session appeared.
+- A copy of the host with another mutex name and inbox can be driven by writing JSON into its inbox: `assets/hal-host.ps1` copied to a scratch folder with `Local\HAL-host` renamed, run with `-Inbox`, stdout to a file. That is how the haze bug above was found.
 - Silero VAD with `min_speech_duration` 0.3 s drops a quiet "stop" (little voice in it); the microphone uses 0.15 s.
 - A lone "HAL" cannot be recognised reliably on a laptop microphone: spellings, learned lone words and MFCC/DTW prints were all tried and removed (0.6). Whole sentences work: keep it that way unless a real wake-word engine comes in.
 - `$.model.complete` takes text only (no images) in this build: the webcam is measured locally instead.

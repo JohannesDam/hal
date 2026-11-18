@@ -135,6 +135,10 @@ The owner: "please wake up" was not always heard, and the first word often fell 
 
 A second "please wake up" soon after "stop" opened a conversation without an eye: the host queued the eye only when idle, and his closing line and its slow exit were still running. The eye and his first words are now always queued (after whatever plays) and never dropped as late. While he is on screen, the host puts the haze windows back on top every 1.5 s (SetWindowPos HWND_TOPMOST, no move, no size, no activation): another topmost window can no longer push him down.
 
+### Only the first haze ever appeared (0.6.4)
+
+The real reason the eye did not come back (0.6.2 and 0.6.3 fixed neighbours of it): WPF refused to show a hidden haze window that was still maximised ("Cannot show Window when ShowActivated is false and WindowState is set to Maximized"), so every haze after the first of a session failed with an error the mod only logged. Found by driving a copy of the host, with its own mutex and inbox, through open, close and reopen. The window is set to Normal before it is shown and maximised after. Probably also why the owner saw no eye on the laptop in the morning. The sleep sentence also accepts "ga slapen" and "ga te sleepen".
+
 ### Step 10: HAL sees (built; live test open; owner decision 2026-11-18)
 
 The best experience is with a webcam and a microphone.

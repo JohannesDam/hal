@@ -805,7 +805,10 @@ function Start-Next {
       $p.Line.Text = [string]$S.phrases[0]
       $p.Line.Opacity = 0; $p.Spark.Opacity = 0; $p.EyeGroup.Opacity = 0
       $p.win.Opacity = 1
-      if (-not $p.win.IsVisible) { $p.win.Show(); $p.win.WindowState = 'Maximized' }
+      # A hidden window stays Maximized, and WPF refuses to Show a maximised window that may not be
+      # activated: every appearance after the first one failed. Normal first, then show, then
+      # maximise.
+      if (-not $p.win.IsVisible) { $p.win.WindowState = 'Normal'; $p.win.Show(); $p.win.WindowState = 'Maximized' }
       if ($p.monitor -eq [IntPtr]::Zero) { $p.monitor = [HalNative]::MonitorOf((New-Object System.Windows.Interop.WindowInteropHelper $p.win).Handle) }
       $isActive = ($p.monitor -eq $active) -or ($windows.Count -eq 1)
       $vis = 'Collapsed'; if ($isActive) { $vis = 'Visible' }
