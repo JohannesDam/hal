@@ -1,6 +1,6 @@
 {
   "name": "hal",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "HAL: a calm, faintly distrustful computer character for Claude Code, with a living red eye, a voice and a haze over your screen",
   "types": "./types/index.d.ts"
 }

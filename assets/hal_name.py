@@ -28,7 +28,25 @@ MAX_NAME_SEC = 1.6
 DEFAULT_SPELLINGS = ["hal", "hall", "hale", "howl", "hull", "hel", "hell"]
 LEADERS = {"hey", "hee", "hé", "oké", "okay", "ok", "hoi"}
 # Words that open ordinary sentences and must never become his name, whatever Whisper did.
-NEVER = {"al", "haal", "hallo", "hello", "hi", "he", "hey", "hè", "hoi", "ja", "nee", "ok", "okay", "well", "wel", "all", "i"}
+NEVER = {
+    "al", "haal", "hallo", "hello", "hi", "he", "hey", "hè", "hoi", "ja", "nee", "ok", "okay", "well", "wel", "all", "i",
+    "oh", "go", "how", "who", "hoe", "hè", "her", "his", "has", "had", "hot", "hat", "hit", "help", "half", "halt",
+}
+# A learned spelling must sound like his name: at most one letter away from one of these.
+NAME_SHAPES = ["hal", "hall", "hell", "hale", "hull", "howl", "haul", "hol"]
+
+
+def _distance(a: str, b: str) -> int:
+    row = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        prev, row[0] = row[0], i
+        for j, cb in enumerate(b, 1):
+            prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (ca != cb))
+    return row[-1]
+
+
+def is_name_shaped(word: str) -> bool:
+    return word not in NEVER and any(_distance(word, shape) <= 1 for shape in NAME_SHAPES)
 
 
 def _mel_filters() -> np.ndarray:
@@ -101,6 +119,8 @@ def dtw(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def first_word(text: str) -> str:
+    # Whisper's own markers ("[BLANK_AUDIO]", "(music)") are not words anyone said.
+    text = re.sub(r"\[[^\]]*\]|\([^)]*\)|\*[^*]*\*", " ", text)
     words = re.findall(r"[^\W\d_]+", text.lower())
     if words and words[0] in LEADERS and len(words) > 1:
         words = words[1:]
@@ -130,7 +150,7 @@ class Name:
 
     @property
     def is_learned(self) -> bool:
-        return bool(self.prints) and self.threshold > 0
+        return bool(self.learned.get("ok"))
 
     def load(self) -> None:
         try:
@@ -138,7 +158,11 @@ class Name:
             data = np.load(self.folder / "prints.npz")
             self.prints = [data[k] for k in sorted(data.files)]
             self.threshold = float(meta["threshold"])
-            self.spellings = set(DEFAULT_SPELLINGS) | set(meta.get("spellings", []))
+            # Files from version 1 could hold any word ("oh", "go"): only name-shaped ones count.
+            self.spellings = set(DEFAULT_SPELLINGS) | {w for w in meta.get("spellings", []) if is_name_shaped(w)}
+            if meta.get("version", 1) < 2 and (meta.get("margin") or 0) <= 0:
+                self.threshold = 0.0
+                meta = {**meta, "ok": False}
             self.learned = meta
         except (OSError, ValueError, KeyError):
             self.prints, self.threshold, self.learned = [], 0.0, {}
@@ -156,7 +180,7 @@ class Name:
         return bool(word) and word not in NEVER and word in self.spellings
 
     def sounds_like(self, samples: np.ndarray) -> bool:
-        if not self.is_learned or len(samples) > 3 * MAX_NAME_SEC * RATE:
+        if not self.prints or self.threshold <= 0 or len(samples) > 3 * MAX_NAME_SEC * RATE:
             return False
         f = features(samples)  # the voiced part only
         if len(f) == 0 or len(f) * HOP > MAX_NAME_SEC * RATE:
@@ -178,40 +202,60 @@ class Name:
     def learn(self, names: list[tuple[np.ndarray, str]], others: list[np.ndarray]) -> dict:
         """From five recordings of the name (with Whisper's text) and a few ordinary sentences:
         the spellings, the prints and a threshold. Saves and returns what was learned."""
-        prints = [features(s) for s, _ in names]
-        prints = [p for p in prints if len(p) >= 8]
-        spellings = sorted({w for _, t in names if (w := first_word(t)) and w not in NEVER})
-        if len(prints) < 3:
-            return {"ok": False, "why": "too few clear recordings", "kept": len(prints), "of": len(names)}
-        # How close the name comes to itself: each print against the others.
-        own = [min(dtw(p, q) for j, q in enumerate(prints) if j != i) for i, p in enumerate(prints)]
-        # How close ordinary speech comes: windows of the sentences, about one name long.
-        length = int(np.median([len(p) for p in prints]))
-        windows = []
-        for s in others:
-            f_all = features(s)
-            for start in range(0, max(1, len(f_all) - length + 1), 10):
-                w = f_all[start : start + length]
-                if len(w) >= 8:
-                    windows.append(w - w.mean(axis=0))
-        near_other = min((min(dtw(w, p) for p in prints) for w in windows), default=float("inf"))
-        reach = float(np.percentile(own, 80))
-        if near_other == float("inf"):
-            threshold = reach * 1.15
-        elif reach < near_other:
-            threshold = reach + 0.5 * (near_other - reach)
-        else:
-            threshold = 0.95 * near_other
-        caught = sum(1 for d in own if d <= threshold)
+        # Spellings: only words shaped like his name, written so at least twice.
+        words = [first_word(t) for _, t in names]
+        spellings = sorted({w for w in words if is_name_shaped(w) and words.count(w) >= 2})
+        known = set(DEFAULT_SPELLINGS) | set(spellings)
+        by_spelling = [w in known and w not in NEVER for w in words]
+        clear = [(features(s), i) for i, (s, _) in enumerate(names)]
+        clear = [(p, i) for p, i in clear if len(p) >= 8]
+        prints = [p for p, _ in clear]
+        threshold, margin, by_sound = 0.0, None, [False] * len(names)
+        if len(prints) >= 3:
+            # How close the name comes to itself: each print against the others.
+            own = [min(dtw(p, q) for j, q in enumerate(prints) if j != k) for k, p in enumerate(prints)]
+            # How close ordinary speech comes: windows of the sentences, about one name long,
+            # normalised exactly as the prints are.
+            length = int(np.median([len(p) for p in prints]))
+            windows = []
+            for s in others:
+                f_all = features(s)
+                for start in range(0, max(1, len(f_all) - length + 1), 10):
+                    w = f_all[start : start + length]
+                    if len(w) >= 8:
+                        windows.append((w - w.mean(axis=0)) / (w.std(axis=0) + 1e-3))
+            near_other = min((min(dtw(w, p) for p in prints) for w in windows), default=float("inf"))
+            reach = float(np.percentile(own, 80))
+            if near_other == float("inf"):
+                threshold = reach * 1.15
+            elif reach < near_other:
+                margin = near_other - reach
+                threshold = reach + 0.5 * margin
+            else:
+                # His name and the guest's ordinary words sound alike: the prints would fire on
+                # ordinary speech. They are not used; only the spellings count.
+                margin = near_other - reach
+                threshold = 0.0
+            if threshold > 0:
+                for (_, i), d in zip(clear, own):
+                    by_sound[i] = d <= threshold
+        caught = sum(1 for a, b in zip(by_spelling, by_sound) if a or b)
         meta = {
-            "version": 1,
+            "version": 2,
             "threshold": round(float(threshold), 4),
+            "sound": threshold > 0,
             "spellings": spellings,
             "caught": caught,
-            "of": len(prints),
-            "margin": round(float(near_other - reach), 4) if near_other != float("inf") else None,
+            "of": len(names),
+            "margin": round(float(margin), 4) if margin is not None else None,
             "ok": caught >= 3,
         }
+        if not meta["ok"]:
+            meta["why"] = (
+                "his name and your other words sound too alike to me"
+                if margin is not None and margin <= 0
+                else "speech recognition did not write your HAL as his name"
+            )
         self.folder.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(self.folder / "prints.npz", **{f"p{i}": p for i, p in enumerate(prints)})
         (self.folder / "name.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")

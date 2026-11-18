@@ -87,7 +87,7 @@ export function learnedNote(r: Learned): string {
     return `The guest ran /hal learn; HAL did not hear enough to learn their voice (${r.why ?? 'too little speech'}).`
   }
 
-  return `The guest just taught HAL how they say his name (/hal learn): ${r.caught} of ${r.of} recordings recognised${r.ok ? '' : ', a weak result'}. Tell them in one or two plain sentences how to call him: "HAL", wait for his answer, then speak; or "HAL, ..." in one breath.`
+  return `The guest just taught HAL how they say his name (/hal learn): ${r.caught} of ${r.of} recordings recognised${r.ok ? '' : `, too weak to use (${r.why ?? 'unclear recordings'}); suggest a quieter moment, closer to the microphone, and /hal learn again`}. Tell them in one or two plain sentences how to call him: "HAL", wait for his answer, then speak; or "HAL, ..." in one breath.`
 }
 
 /** The next step after the ears counted another recording, and whether the ears must move on. */
