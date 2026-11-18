@@ -6,6 +6,7 @@ import { closing, conversationNote, isLook, isSleepPhrase, isTypedStop, isWakePh
 import { advance, bandFor, learnedNote, levelFactor, levelLine, lineFor, NAME_TIMES, NOTHING_HEARD, OTHER_TIMES, STOP_TIMES, windowBand, windowMs } from './learn'
 import type { Learn } from './learn'
 import { initiative, newWatch, noteTest, testKey } from './moments'
+import { judgeLine } from './persona'
 import { parseSeen, sightFacts } from './sight'
 
 const T0 = Date.UTC(2026, 10, 17, 21, 0)
@@ -63,6 +64,13 @@ test('a conversation: typed stop, look, the haze settling in, the closing lines'
     expect(/!|\d/.test(first)).toBe(false)
   }
   expect(conversationNote(true, true, false)).toContain('seeing is off')
+  expect(conversationNote(false, false, true)).toContain('ONE quiet personal question')
+  // In a conversation his line may be one question; elsewhere it must end with a full stop.
+  const ctx = { recent: [], name: 'Sam', isNameUsed: false }
+  expect(judgeLine('You came back one minute after you left. What did you forget?', { ...ctx, allowQuestion: true }).isOk).toBe(true)
+  expect(judgeLine('You came back one minute after you left. What did you forget?', ctx).isOk).toBe(false)
+  expect(judgeLine('Why? Why now?', { ...ctx, allowQuestion: true }).isOk).toBe(false)
+  expect(judgeLine('Shall I look again?', { ...ctx, allowQuestion: true }).isOk).toBe(false)
 })
 
 test('/hal learn walks through five names, three stops, two sentences, the weighing and the practice', async () => {

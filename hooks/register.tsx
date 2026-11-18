@@ -24,6 +24,7 @@ import {
   isSleepPhrase,
   isTypedStop,
   isWakePhrase,
+  LOOK_IN_CONVERSATION_MS,
   presenceStrength,
   SEND_DELAY_MS,
 } from './conversation'
@@ -682,6 +683,11 @@ async function facts($: $, level: HalLevel): Promise<string[]> {
   return [
     ...block,
     ...sightFacts(seen, seenBefore, at => localTime(at, utcOffsetMinutes ?? 0)),
+    ...(conversation
+      ? [
+          `A conversation with HAL has been open since ${localTime(conversation.since, utcOffsetMinutes ?? 0)} (${Math.max(0, Math.round(((m?.now ?? conversation.since) - conversation.since) / 60_000))} minutes).`,
+        ]
+      : []),
     `HAL's mood: level ${level}.`,
     ...(room + computer > 0 ? [`Speech in the last five minutes: ${Math.round(room)} s in the room, ${Math.round(computer)} s from the computer.`] : []),
   ]
@@ -976,6 +982,8 @@ async function openConversation($: $, settings: HalSettings) {
   } else {
     await sayPlain($, line, 'open')
   }
+  // With /hal see on he looks at the guest as the conversation opens, then every 90 seconds.
+  void lookIfDue($, true).catch(() => undefined)
   // The haze settles in; two minutes of silence while he is idle, or a call, end it.
   void (async () => {
     while (serial === conversationSerial && conversation) {
@@ -996,6 +1004,9 @@ async function openConversation($: $, settings: HalSettings) {
       }
       if (settings.haze) {
         await send($, { kind: 'presence', strength: presenceStrength(at - conversation.since) })
+      }
+      if (at - lastLookAt >= LOOK_IN_CONVERSATION_MS && mood === 'idle') {
+        void lookIfDue($, true).catch(() => undefined)
       }
     }
   })().catch(() => undefined)
@@ -1834,7 +1845,7 @@ export const register: Register = on => {
     }
     const level = await currentLevel($, settings)
     const line = held
-    const verdict = line ? judgeLine(line, { recent, name: settings.name, isNameUsed }) : undefined
+    const verdict = line ? judgeLine(line, { recent, name: settings.name, isNameUsed, allowQuestion: conversation !== undefined }) : undefined
     if (line && verdict && !verdict.isOk) {
       $.ui.log(`hal: kept silent, the line broke the style rules (${verdict.why}): ${line}`, { to: 'debug' })
     }

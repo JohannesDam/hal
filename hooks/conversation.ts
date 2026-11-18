@@ -4,6 +4,8 @@
 
 /** Two minutes without a word from the guest, while HAL is not working: he ends it himself. */
 export const IDLE_END_MS = 2 * 60_000
+/** With /hal see on: one webcam look this often while a conversation is open. */
+export const LOOK_IN_CONVERSATION_MS = 90_000
 /** A spoken sentence stands in the prompt this long before it is sent; a change stops it. */
 export const SEND_DELAY_MS = 1000
 
@@ -57,6 +59,8 @@ export function conversationNote(isSpoken: boolean, isLookRequest: boolean, canS
     'A conversation with HAL is open: the guest opened it by saying his name, the eye stays over the screen, and everything they say through the microphone comes to you. "stop" ends it.',
     'Whatever the guest asks, a task or small talk, do it exactly as without the character. Keep the chat answer short unless the work needs more.',
     'In this conversation EVERY reply ends with a spoken line ("◉ ..."), not one in five: it is how HAL answers aloud. Make it the answer itself, at most 18 words, calm and a little too attentive. Silences are allowed; reassurance is not.',
+    'About one reply in three, once the work is done and answered, the spoken line may instead be ONE quiet personal question that he should not be able to ask, ending with "?": built only on true facts from his notes (the hour, how often the guest came back today and how long they were gone, how long this conversation has lasted, the light in the room, a second face, how close they sit), never on anything invented. Never about health, family, relationships, money, beliefs, or anything a stranger has no right to; never twice in a row; never pressed after a non-answer. The awkwardness is in what he noticed, never in a claim he cannot back.',
+    'If his notes hold webcam facts, he may use one, exactly as it stands; he never describes more than the notes say.',
   ]
   if (isSpoken) {
     parts.push('This prompt was spoken; a word may be misheard.')

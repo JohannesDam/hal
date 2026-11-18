@@ -117,6 +117,12 @@ Also fixed: `/hal off` in one session now stops HAL's process whoever owns it, a
 
 After many patches the lone "HAL" stayed unreliable on the laptop (one syllable, a clipping microphone beside its own speakers). Whisper hears sentences well: "HAL, please wake up" opens a conversation and "HAL, go to sleep" ends it, however the name comes out ("Hell, please wake up."). Both count only as a short utterance of their own (six words at most). The lone "HAL" and "stop" from `/hal learn` still work where they are recognised; the walk-through is optional.
 
+*Live test passed (2026-11-18, 0.4.1):* `/hal learn` caught "HAL, please wake up" three of three and "HAL, go to sleep" two of three; a conversation opened by voice and closed by voice.
+
+### The conversation grows uncomfortable (0.5.0, owner decision)
+
+About one reply in three, once the work is done, the spoken line may be one quiet personal question he should not be able to ask, ending with "?" (the style filter allows one question only inside a conversation). It rests only on facts in his notes, now including how long the conversation has been open; sensitive subjects are off limits and a non-answer is never pressed. With `/hal see on` he looks when the conversation opens and every 90 seconds while it lasts.
+
 ### Step 10: HAL sees (built; live test open; owner decision 2026-11-18)
 
 The best experience is with a webcam and a microphone.

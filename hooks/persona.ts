@@ -189,13 +189,14 @@ export type Verdict = { isOk: true } | { isOk: false; why: string }
 /** The style bible as a filter: a line that breaks it is dropped and HAL stays silent. */
 export function judgeLine(
   line: string,
-  ctx: { recent: readonly string[]; name: string; isNameUsed: boolean },
+  ctx: { recent: readonly string[]; name: string; isNameUsed: boolean; allowQuestion?: boolean },
 ): Verdict {
   const words = line.split(/\s+/).filter(Boolean).length
   if (words > 18) {
     return { isOk: false, why: `${words} words` }
   }
-  if (!/\.$/.test(line)) {
+  // In a conversation his line may be one quiet question (conversation.ts); elsewhere a full stop.
+  if (!/\.$/.test(line) && !(ctx.allowQuestion && /\?$/.test(line) && (line.match(/\?/g) ?? []).length === 1)) {
     return { isOk: false, why: 'does not end with a full stop' }
   }
   for (const [pattern, why] of FORBIDDEN) {
