@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { beginVisit, endVisit, factBlock, parseGit, readDossier, receptionKind } from './dossier'
 import { acknowledgement, addressed, keep, remarkFrom, shouldWeigh, tally } from './ears'
 import { closing, conversationNote, isLook, isTypedStop, presenceStrength } from './conversation'
-import { advance, bandFor, learnedNote, lineFor, NAME_TIMES, NOTHING_HEARD, OTHER_TIMES, STOP_TIMES, windowBand, windowMs } from './learn'
+import { advance, bandFor, learnedNote, levelFactor, levelLine, lineFor, NAME_TIMES, NOTHING_HEARD, OTHER_TIMES, STOP_TIMES, windowBand, windowMs } from './learn'
 import type { Learn } from './learn'
 import { initiative, newWatch, noteTest, testKey } from './moments'
 import { parseSeen, sightFacts } from './sight'
@@ -91,6 +91,13 @@ test('/hal learn walks through five names, three stops, two sentences, the weigh
   expect(windowBand({ step: 'stop', got: 0, at: T0 }, 0.5)).toBe('HAL listens · say "stop" now ▕████████░░░░░░░░▏ 0 of 3')
   expect(windowBand({ step: 'other', got: 1, at: T0 }, 0)).toBe('HAL listens · say a sentence now ▕░░░░░░░░░░░░░░░░▏ 1 of 2')
   expect(windowMs('other') > windowMs('name')).toBe(true)
+  // The level: a clipping voice is turned down, a drowning one up, at most three times.
+  expect(levelFactor(0.97, 0)).toBe(0.65)
+  expect(levelFactor(0.02, 1)).toBe(1.5)
+  expect(levelFactor(0.5, 0)).toBeUndefined()
+  expect(levelFactor(0.99, 3)).toBeUndefined()
+  expect(levelFactor(undefined, 0)).toBeUndefined()
+  expect(levelLine(0.65).startsWith('Too loud')).toBe(true)
   expect(/^[A-Z][a-z]+ /.test(NOTHING_HEARD) && !/^(A|E|I|O|U)/.test(NOTHING_HEARD)).toBe(true)
   // What he says stays inside his own rules: no exclamation marks, short, numbers as words.
   for (const line of [lineFor.start, lineFor.toOther, lineFor.result({ ok: true, caught: 5, of: 5 }), lineFor.result({ ok: false, caught: 2, of: 5 }), lineFor.result({ ok: false, why: 'x' })]) {

@@ -24,6 +24,8 @@ import {
   HOW_TO_CALL,
   LEARN_INTRO,
   learnedNote,
+  levelFactor,
+  levelLine,
   lineFor,
   NOTHING_HEARD,
   PRACTICE_MS,
@@ -132,6 +134,7 @@ let learnSerial = 0
 let learnLineId: string | undefined
 let windowSerial = 0
 let windowMisses = 0
+let levelChanges = 0
 // /hal see (sight.ts): the last two looks, as numbers. Only in this module's memory.
 let seen: Seen | undefined
 let seenBefore: Seen | undefined
@@ -385,7 +388,18 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       break
     case 'learn':
       if (typeof message.got === 'number' && learning && message.step === learning.step) {
-        await onLearnStep($, message.got)
+        await onLearnStep($, message.got, typeof message.peak === 'number' ? message.peak : undefined)
+      }
+      break
+    case 'mic-level':
+      if (typeof message.before === 'number' && typeof message.after === 'number') {
+        const pct = (v: number) => `${Math.round(v * 100)}%`
+        notes.push(
+          `During /hal learn the guest's voice ${message.after < message.before ? 'clipped' : 'was too quiet'}, so HAL set the microphone's input level from ${pct(message.before)} to ${pct(message.after)}. Say so once, plainly, with where to change it back: Windows Settings, Sound, the microphone's input volume.`,
+        )
+        await showSaid($, `HAL set the microphone from ${pct(message.before)} to ${pct(message.after)} · say "HAL" again`, 6000)
+      } else {
+        $.ui.log(`hal: the microphone level could not be set (${String(message.error)})`, { to: 'debug' })
       }
       break
     case 'learned':
@@ -1023,6 +1037,7 @@ async function startLearning($: $, settings: HalSettings) {
   await setLearning($, { step: 'name', got: 0, at: await $.clock.now() })
   lookAtYou(4000)
   windowMisses = 0
+  levelChanges = 0
   await sayLearnLine($, lineFor.start)
 }
 
@@ -1064,8 +1079,20 @@ async function openListenWindow($: $) {
   await sayLearnLine($, NOTHING_HEARD)
 }
 
-async function onLearnStep($: $, got: number) {
+async function onLearnStep($: $, got: number, peak?: number) {
   if (!learning) {
+    return
+  }
+  // The level first: a clipping voice loses its H and its L. Turn it down, start the names again.
+  const factor = learning.step === 'name' ? levelFactor(peak, levelChanges) : undefined
+  if (factor !== undefined) {
+    levelChanges += 1
+    await send($, { kind: 'mic-level', factor })
+    await send($, { kind: 'learn', step: 'name' })
+    await setLearning($, { step: 'name', got: 0, at: await $.clock.now() })
+    windowMisses = 0
+    await sayLearnLine($, levelLine(factor))
+
     return
   }
   const step = advance(learning, got, await $.clock.now())

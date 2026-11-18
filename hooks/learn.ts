@@ -41,6 +41,7 @@ Stay near the microphone; follow his voice.
   4. He weighs what he heard and tells you how well he knows your voice.
   5. Then open a conversation for real: say "HAL", and "stop" when you are done.
 
+Wait for the bar in the band, then say the word once. If your voice clips (too loud) or drowns (too quiet), he sets the microphone's input level himself and says so; Windows Settings > Sound changes it back.
 What he learns stays on this machine (%LOCALAPPDATA%\\hal\\name): how speech recognition writes your words, and a small acoustic print of each time you said them, never the recording. /hal forget erases it. /hal learn stop ends this.`
 
 /** How to talk with him: shown after learning, and in /hal help. */
@@ -85,6 +86,30 @@ export function windowBand(learn: Learn, left: number): string {
 
   return `HAL listens · ${what} ${bar} ${learn.got} of ${of}`
 }
+
+/** At most this many level changes in one walk-through. */
+export const MAX_LEVEL_CHANGES = 3
+
+/**
+ * The microphone's level, from the peak of a name recording: above 0.9 the voice clips (the H and
+ * the L are lost), below 0.05 it drowns in the room. A factor for the input level, or undefined.
+ */
+export function levelFactor(peak: number | undefined, changes: number): number | undefined {
+  if (peak === undefined || changes >= MAX_LEVEL_CHANGES) {
+    return undefined
+  }
+  if (peak >= 0.9) {
+    return 0.65
+  }
+  if (peak < 0.05) {
+    return 1.5
+  }
+
+  return undefined
+}
+
+export const levelLine = (factor: number) =>
+  factor < 1 ? 'Too loud. I turned you down. Say my name again.' : 'Too quiet. I turned you up. Say my name again.'
 
 /** The window closed and nothing came. */
 export const NOTHING_HEARD = 'Nothing reached me. Once more.'

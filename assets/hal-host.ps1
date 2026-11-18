@@ -1184,6 +1184,29 @@ function Read-Desk {
   }
 }
 
+# ---------- the microphone's input level: /hal learn sets it when the guest's voice clips ----------
+Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IHalEndpointVolume { int RegisterControlChangeNotify(IntPtr p); int UnregisterControlChangeNotify(IntPtr p); int GetChannelCount(out uint c); int SetMasterVolumeLevel(float l, Guid g); int SetMasterVolumeLevelScalar(float l, Guid g); int GetMasterVolumeLevel(out float l); int GetMasterVolumeLevelScalar(out float l); }
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IHalDevice { int Activate(ref Guid id, int ctx, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o); }
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IHalDeviceEnumerator { int EnumAudioEndpoints(int flow, int mask, out IntPtr devices); int GetDefaultAudioEndpoint(int flow, int role, out IHalDevice d); }
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class HalDeviceEnumerator {}
+public static class HalMicLevel {
+  static IHalEndpointVolume Volume() {
+    var e = (IHalDeviceEnumerator)new HalDeviceEnumerator(); IHalDevice d;
+    Marshal.ThrowExceptionForHR(e.GetDefaultAudioEndpoint(1, 0, out d));   // capture, console
+    var g = typeof(IHalEndpointVolume).GUID; object o;
+    Marshal.ThrowExceptionForHR(d.Activate(ref g, 23, IntPtr.Zero, out o));
+    return (IHalEndpointVolume)o;
+  }
+  public static double Get() { float v; Volume().GetMasterVolumeLevelScalar(out v); return v; }
+  public static double Set(double v) { var vol = Volume(); vol.SetMasterVolumeLevelScalar((float)Math.Max(0.0, Math.Min(1.0, v)), Guid.Empty); float now; vol.GetMasterVolumeLevelScalar(out now); return now; }
+}
+'@
+
 # ---------- the ears: hal-ears.py, while the mod asks HAL to listen ----------
 # Their lines go to stdout as they are; the host only gates them while HAL speaks.
 $script:ears = $null
@@ -1287,6 +1310,14 @@ function Read-Inbox {
         if ($script:earsWanted) { $script:earsStarts = @(); Start-Ears; if ($msg.override) { Send-Ears '{"override": true}' } } else { Stop-Ears }
       }
       'learn' { Send-Ears (@{ learn = [string]$msg.step } | ConvertTo-Json -Compress) }
+      'mic-level' {
+        # Only from /hal learn: the default microphone's input level times a factor, 30% to 100%.
+        try {
+          $before = [HalMicLevel]::Get()
+          $after = [HalMicLevel]::Set([Math]::Max(0.3, [Math]::Min(1.0, $before * [double]$msg.factor)))
+          Emit @{ t = 'mic-level'; before = [Math]::Round($before, 2); after = [Math]::Round($after, 2) }
+        } catch { Emit @{ t = 'mic-level'; error = "$_" } }
+      }
       'presence' {
         # A conversation: on, the eye comes (with his first words, if any) and stays; off, it goes
         # after the line he is saying. A strength alone darkens the haze that is there.

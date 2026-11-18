@@ -16,7 +16,7 @@ stdout, one JSON object per line:
   {"t": "heard", "src", "text", "lang", "sec"}
   {"t": "heard", "src": "mic", "name": true, "text": <the rest, or "">, "sec"}  addressed to HAL
   {"t": "heard", "src": "mic", "stop": true, "text": ""}   "stop", alone: the conversation ends
-  {"t": "learn", "step": "name"|"stop"|"other", "got": n}
+  {"t": "learn", "step": "name"|"stop"|"other", "got": n, "peak": 0..1 (name only)}
   {"t": "learned", "ok", "caught", "of", "spellings", ...} or {"t": "learned", "forgotten": true}
   {"t": "error", "why"}
 """
@@ -327,7 +327,9 @@ class Ears:
             if sec > 2.5:  # a sentence, not a name: ignored
                 return
             learning["names"].append((segment, text))
-            emit({"t": "learn", "step": "name", "got": len(learning["names"])})
+            # The peak lets the mod set the microphone's level: above 0.9 the voice clips.
+            peak = round(float(np.abs(segment).max()), 3)
+            emit({"t": "learn", "step": "name", "got": len(learning["names"]), "peak": peak})
         elif learning["step"] == "stop":
             if sec > 2.5:
                 return
