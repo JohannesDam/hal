@@ -1,7 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
 import { beginVisit, endVisit, factBlock, parseGit, readDossier, receptionKind } from './dossier'
-import { addressed, keep, remarkFrom, shouldWeigh, tally } from './ears'
+import { acknowledgement, addressed, keep, remarkFrom, shouldWeigh, tally } from './ears'
+import { advance, bandFor, learnedNote, lineFor, NAME_TIMES, OTHER_TIMES } from './learn'
+import type { Learn } from './learn'
 import { initiative, newWatch, noteTest, testKey } from './moments'
 
 const T0 = Date.UTC(2026, 10, 17, 21, 0)
@@ -13,10 +15,54 @@ test('a sentence that starts with his name is a command; the rest is not', async
   expect(addressed('Hall, commit the voice.')).toBe('Commit the voice.')
   expect(addressed('Al, commit it.')).toBe('Commit it.')
   expect(addressed('HAL.')).toBe('')
+  // How Whisper often writes a lone "HAL".
+  expect(addressed('Hell.')).toBe('')
+  expect(addressed('Hell, what time is it?')).toBe('What time is it?')
   // Ordinary sentences, also the Dutch "al" and "haal".
   expect(addressed('Al gedaan, dank je.')).toBeUndefined()
   expect(addressed('Haal de laatste versie op.')).toBeUndefined()
   expect(addressed('I think HAL is listening.')).toBeUndefined()
+})
+
+test('his name alone gets a short answer, never the same one twice in a row', async () => {
+  for (const level of [1, 2, 3] as const) {
+    const first = acknowledgement(level, undefined, 0)
+    expect(first.split(/\s+/).length <= 6).toBe(true)
+    expect(/!/.test(first)).toBe(false)
+    for (const pick of [0, 0.3, 0.6, 0.99]) {
+      expect(acknowledgement(level, first, pick) === first).toBe(false)
+    }
+  }
+})
+
+test('/hal learn walks through five names, two sentences, the weighing and the practice', async () => {
+  let learn: Learn = { step: 'name', got: 0, at: T0 }
+  const said: string[] = []
+  const sent: string[] = []
+  for (let got = 1; got <= NAME_TIMES; got++) {
+    const step = advance(learn, got, T0 + got)
+    learn = step.next
+    if (step.say) said.push(step.say)
+    if (step.send) sent.push(step.send)
+  }
+  expect(learn.step).toBe('other')
+  expect(sent).toEqual(['other'])
+  expect(said.at(-1)).toBe(lineFor.toOther)
+  for (let got = 1; got <= OTHER_TIMES; got++) {
+    const step = advance(learn, got, T0 + 10 + got)
+    learn = step.next
+    if (step.send) sent.push(step.send)
+  }
+  expect(learn.step).toBe('weighing')
+  expect(sent).toEqual(['other', 'finish'])
+  expect(bandFor({ step: 'name', got: 2, at: T0 })).toBe('HAL learns · say "HAL", then be still · 2 of 5')
+  // What he says stays inside his own rules: no exclamation marks, short, numbers as words.
+  for (const line of [lineFor.start, lineFor.toOther, lineFor.result({ ok: true, caught: 5, of: 5 }), lineFor.result({ ok: false, caught: 2, of: 5 }), lineFor.result({ ok: false, why: 'x' })]) {
+    expect(/!|\d/.test(line)).toBe(false)
+    expect(line.split(/\s+/).length <= 18).toBe(true)
+  }
+  expect(lineFor.result({ ok: true, caught: 5, of: 5 })).toBe('Five of five. I know how you say my name now. Call me.')
+  expect(learnedNote({ ok: true, caught: 4, of: 5 }).includes('4 of 5')).toBe(true)
 })
 
 test('the transcript keeps five minutes, nothing older', async () => {

@@ -13,7 +13,7 @@ export function keep(buffer: readonly Heard[], heard: Heard): Heard[] {
 
 // How speech recognition writes his name at the start of a sentence. "Al" (a dropped H)
 // only counts with a comma after it: "al" also opens ordinary Dutch sentences.
-const ADDRESS = /^(?:(?:hey|hee|hé|oké|okay|ok|hoi)[\s,]+)?(?:hal|hall|hale|howl|hull|hel)\b[\s,.:;!?-]*(.*)$/i
+const ADDRESS = /^(?:(?:hey|hee|hé|oké|okay|ok|hoi)[\s,]+)?(?:hal|hall|hale|howl|hull|hel|hell)\b[\s,.:;!?-]*(.*)$/i
 const ADDRESS_AL = /^al\s*,\s*(.*)$/i
 
 /**
@@ -29,6 +29,25 @@ export function addressed(text: string): string | undefined {
   const rest = (match[1] ?? '').trim()
 
   return /[a-z]/i.test(rest) ? rest.charAt(0).toUpperCase() + rest.slice(1) : ''
+}
+
+/**
+ * His name alone ("HAL." and a pause): he answers, and the next sentence from the microphone
+ * within this window is the command, without his name in front of it.
+ */
+export const ATTEND_MS = 10_000
+
+const ACKNOWLEDGEMENTS: Record<1 | 2 | 3, readonly string[]> = {
+  1: ['Yes.', 'I am here.', 'Go on.'],
+  2: ['I heard you.', 'Go on. I am listening.', 'Yes. Say it.'],
+  3: ['I was already listening.', '...Yes.', 'Go on. Slowly.'],
+}
+
+/** What he says when he hears only his name: short, cold, never the same as the last time. */
+export function acknowledgement(level: 1 | 2 | 3, last: string | undefined, pick: number): string {
+  const lines = ACKNOWLEDGEMENTS[level].filter(line => line !== last)
+
+  return lines[Math.floor(pick * lines.length) % lines.length] ?? 'Yes.'
 }
 
 /** His name anywhere: the eye looks at you. */

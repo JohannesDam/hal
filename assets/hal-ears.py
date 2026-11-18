@@ -9,10 +9,14 @@ writes it down. Nothing is written to disk; the words exist only in the lines be
 stdin, one JSON object per line, from the host:
   {"gate": true|false}   HAL speaks / is done (300 ms tail after false)
   {"override": true}     keep listening while another app holds the microphone, for that call
+  {"learn": "name"|"other"|"finish"|"cancel"|"forget"}   /hal learn (hal_name.py)
 stdout, one JSON object per line:
-  {"t": "ears", "state": "listening"|"deaf", "why", "app", "mic", "loop"}
+  {"t": "ears", "state": "listening"|"deaf", "why", "app", "mic", "loop", "learned"}
   {"t": "speech", "src": "mic"|"loop", "on": true|false}
   {"t": "heard", "src", "text", "lang", "sec"}
+  {"t": "heard", "src": "mic", "name": true, "text": <the rest, or "">, "sec"}  addressed to HAL
+  {"t": "learn", "step": "name"|"other", "got": n}
+  {"t": "learned", "ok", "caught", "of", "spellings", ...} or {"t": "learned", "forgotten": true}
   {"t": "error", "why"}
 """
 
@@ -28,6 +32,8 @@ import winreg
 from pathlib import Path
 
 import numpy as np
+
+from hal_name import Name
 
 RATE = 16000
 BLOCK = 1600  # 100 ms
@@ -238,6 +244,9 @@ class Ears:
         self.segments: queue.Queue = queue.Queue()
         self.sources = [Source("mic", self), Source("loop", self)]
         self.reported = ""
+        self.name = Name(MODELS.parent / "name")
+        # /hal learn: {"step": "name"|"other", "names": [(samples, text)], "others": [samples]}
+        self.learning: dict | None = None
 
     def report(self) -> None:
         state = {
@@ -247,6 +256,7 @@ class Ears:
             "app": self.gate.call_app,
             "mic": self.sources[0].device_name,
             "loop": self.sources[1].device_name,
+            "learned": self.name.is_learned,
         }
         text = json.dumps(state, sort_keys=True)
         if text != self.reported:
@@ -283,9 +293,59 @@ class Ears:
             recognizer.decode_stream(stream)
             text = stream.result.text.strip()
             lang = getattr(stream.result, "lang", "")
-            if is_noise(text, lang):
+            noise = is_noise(text, lang)
+            sec = round(len(segment) / RATE, 1)
+            if kind == "mic" and self.learning is not None:
+                self.learn_segment(segment, "" if noise else text)
                 continue
-            emit({"t": "heard", "src": kind, "text": text, "lang": lang, "sec": round(len(segment) / RATE, 1)})
+            if kind == "mic":
+                named, rest = self.name.hear(text, segment, noise)
+                if named:
+                    emit({"t": "heard", "src": kind, "name": True, "text": rest, "lang": lang, "sec": sec})
+                    continue
+            if noise:
+                continue
+            emit({"t": "heard", "src": kind, "text": text, "lang": lang, "sec": sec})
+
+    def learn_segment(self, segment: np.ndarray, text: str) -> None:
+        """/hal learn: the name five times, then ordinary sentences. Nothing is sent as heard."""
+        learning = self.learning
+        if learning is None:
+            return
+        sec = len(segment) / RATE
+        if learning["step"] == "name":
+            if sec > 2.5:  # a sentence, not a name: ignored
+                return
+            learning["names"].append((segment, text))
+            emit({"t": "learn", "step": "name", "got": len(learning["names"])})
+        elif learning["step"] == "other":
+            if sec < 1.0:
+                return
+            learning["others"].append(segment)
+            emit({"t": "learn", "step": "other", "got": len(learning["others"])})
+
+    def on_learn(self, step: str) -> None:
+        if step == "name":
+            self.learning = {"step": "name", "names": [], "others": []}
+        elif step == "other" and self.learning is not None:
+            self.learning["step"] = "other"
+        elif step == "finish" and self.learning is not None:
+            learning, self.learning = self.learning, None
+            try:
+                result = self.name.learn(learning["names"], learning["others"])
+            except Exception as error:  # never leave the wizard hanging
+                result = {"ok": False, "why": str(error)}
+            emit({"t": "learned", **result})
+            self.reported = ""
+            self.report()
+        elif step == "cancel":
+            self.learning = None
+        elif step == "forget":
+            self.learning = None
+            self.name.forget()
+            emit({"t": "learned", "forgotten": True})
+            self.reported = ""
+            self.report()
 
     def guard(self) -> None:
         """Deaf while another app holds the microphone (a call), unless overridden for it."""
@@ -310,6 +370,8 @@ class Ears:
             if message.get("override"):
                 self.gate.is_override = True
                 self.report()
+            if isinstance(message.get("learn"), str):
+                self.on_learn(message["learn"])
         os._exit(0)  # the host closed our stdin: it is gone, so are we
 
 

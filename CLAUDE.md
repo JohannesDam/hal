@@ -13,15 +13,15 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 
 ## Layout
 
-- `hooks/register.tsx` the mod · `persona.ts` character text, style filter, commands · `mood.ts` mood and signals · `gaze.ts` where the eye looks · `eye.ts` the band and pane eye in half-block pixels · `ears.ts` what the mod does with what HAL hears · `dossier.ts` the notes and the fact block · `moments.ts` HAL's own lines (reception, waking, initiative, farewell) and when he may speak unprompted · `hal.test.tsx` and `units.test.ts` tests.
-- `assets/hal-host.ps1` one process per PC: voice, processing chain, haze windows, choreography; inbox `%LOCALAPPDATA%\hal\inbox` in, JSON lines on stdout out. `assets/hal-voice.py` + `hal_piper.py` the warm neural voice (Piper `kestrin`; `hal_kokoro.py` for Kokoro `am_michael` when kestrin is missing). `assets/hal-ears.py` the ears (mic + loopback, VAD, Whisper), started by the host while the mod asks HAL to listen. `assets/hal-farewell.ps1` the last word, started through WMI by the host. `assets/hal.ps1` one line from a shell.
+- `hooks/register.tsx` the mod · `persona.ts` character text, style filter, commands · `mood.ts` mood and signals · `gaze.ts` where the eye looks · `eye.ts` the band and pane eye in half-block pixels · `ears.ts` what the mod does with what HAL hears · `learn.ts` the `/hal learn` walk-through · `dossier.ts` the notes and the fact block · `moments.ts` HAL's own lines (reception, waking, initiative, farewell) and when he may speak unprompted · `hal.test.tsx` and `units.test.ts` tests.
+- `assets/hal-host.ps1` one process per PC: voice, processing chain, haze windows, choreography; inbox `%LOCALAPPDATA%\hal\inbox` in, JSON lines on stdout out. `assets/hal-voice.py` + `hal_piper.py` the warm neural voice (Piper `kestrin`; `hal_kokoro.py` for Kokoro `am_michael` when kestrin is missing). `assets/hal-ears.py` the ears (mic + loopback, VAD, Whisper), started by the host while the mod asks HAL to listen; `hal_name.py` his name as the guest says it (`/hal learn`, kept in `%LOCALAPPDATA%\hal\name`). `assets/hal-farewell.ps1` the last word, started through WMI by the host. `assets/hal.ps1` one line from a shell.
 - `tools/setup-voice.ps1` voice + Python environment · `tools/listening_test.py` the blind test · `tools/render-pictures.ps1` the README pictures in `docs/images`, rendered offscreen from `hooks/eye.ts` and the host's haze (rerun after changing either; never a screenshot of a real screen).
 - Models and the venv live in `%LOCALAPPDATA%\hal`, never in the repo. The kestrin model is a GitHub release asset (`voice-kestrin`); `setup-voice.ps1` pins its SHA-256.
 
 ## Checks
 
 - `claude plugin validate .` and `claude plugin test .` after every change to `hooks/`.
-- The host from a shell: `powershell -NoProfile -STA -ExecutionPolicy Bypass -File assets\hal-host.ps1 -Say "Nothing was deleted. I checked." -IgnoreKeys` (`-IgnoreKeys` is for tests only; without it a key press during the entrance sends HAL away, as designed).
+- The host from a shell: `powershell -NoProfile -STA -ExecutionPolicy Bypass -File assets\hal-host.ps1 -Say "Nothing was deleted. I checked." -IgnoreKeys` (`-IgnoreKeys` keeps test key presses out of the count; keys never end a line, by design: the guest cannot send the host away).
 
 ## Gotchas met so far
 
@@ -49,4 +49,8 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 - In tests `$.store` is not reachable from the test's `$`: seed it with `mock.store(on, entries)` and read results through the mod's own commands (`/hal dossier`).
 - A test's `$` needs answers for every engine call the mod makes: `session.id`, `model.complete`, `process.run` (git status), `fs.write`.
 - Settings live in `$.store`, shared by every session on the machine; the atom is per session. The store is the truth: `followStore` brings a session in line, and `/hal off` always sends `quit`.
+- Whisper writes a lone "HAL" as "Hell." more often than "Hal."; a lone name is its own VAD segment, so the command that follows never starts with his name (hence the attend window after his answer).
+- The sherpa-onnx keyword spotter (GigaSpeech 3.3M) misses a lone "HAL" at every threshold and fires on "the hall": not usable for his name.
+- Raw MFCC + DTW does not survive noise: drop c0, add the room's floor to each band before the log, and normalise mean and variance per recording.
+- PowerShell 5.1's `Set-Content -Encoding utf8` mangles `▁` and other non-ANSI text read from a script: write such files with an editor or Python.
 - Saving a file in `hooks/` reloads the mod in every session that has it loaded; the reloads race for HAL's process. Do not develop in a session while the owner tests HAL in another.

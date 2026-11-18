@@ -19,7 +19,7 @@ param(
   # tools/setup-voice.ps1. Speed 0 takes the engine's own default.
   [string]$Voice = "kestrin",
   [double]$Speed = 0.0,
-  # Testing only: do not let key presses interrupt (the mod never sets this).
+  # Testing only: do not count key presses (keys never end a line; the mod never sets this).
   [switch]$IgnoreKeys
 )
 $ErrorActionPreference = 'Stop'
@@ -741,10 +741,10 @@ function Get-Windows {
 # One line runs through four phases:
 #   enter  the haze creeps in from the edges, a point of light, the iris opens toward you;
 #          the voice never starts before 2.0 s, plus the pause the mod asked for
-#   speak  the voice; typing now clears the centre and shrinks the eye, the sentence ends
+#   speak  the voice; the aperture holds, only its rim follows the voice
 #   stare  2 s of staring after the last word (3 s for the wordless eye)
 #   exit   1.8 s: the iris closes, the centre clears first, the edges last, a red point fades
-# Typing before the first word drops the line and leaves in 0.3 s.
+# Keys never cut a line short: the guest's typing goes on underneath the click-through haze and is only counted.
 $script:S = @{
   queue = New-Object System.Collections.ArrayList
   item = $null; phase = 'idle'; windows = @(); screensKey = ''
@@ -848,10 +848,6 @@ function Get-Visual([double]$t, [double]$fast) {
     'speak' {
       $v.open = 0.4   # held: only the rim follows the voice
       $v.line = 0.85 * (& $clamp (($t - $S.speakStart) / 0.8))
-      if ($null -ne $S.interruptedAt) {
-        $k = & $clamp (($t - $S.interruptedAt) / 0.3)
-        $v.center = 1 - $k; $v.scale = 1 - 0.6 * $k
-      }
     }
     'stare' {
       $v.open = 0.35; $v.mode = 'atYou'
@@ -957,7 +953,8 @@ $script:anim.Add_Tick({
             $readyT = $t; if ($null -ne $S.voiceReadyT) { $readyT = $S.voiceReadyT }
             $S.speakAt = [Math]::Max($minT, $readyT) + $S.pause
           }
-          if ($isKeyed) { Start-Exit $t 0.3 'dropped' ('typing (key 0x{0:X2})' -f [HalNative]::LastKey); break }
+          # Keys never send him away: the guest types on, the eye stays. Only counted.
+          if ($isKeyed -and $null -eq $S.interruptedAt) { $S.interruptedAt = $t }
           if ($null -eq $S.speakAt -and (NowMs) - [int64]$item.at -gt (Get-LateMs)) { Start-Exit $t 0.3 'dropped' 'late'; break }
           # The house tone swells in ahead of the first word: playback starts `lead` early.
           if ($S.wav -and -not $S.isPlayed -and $null -ne $S.speakAt -and $t -ge $S.speakAt - $S.lead) {
@@ -987,13 +984,14 @@ $script:anim.Add_Tick({
           }
           if ($u -ge $seconds) {
             Emit @{ t = 'level'; v = 0 }
-            if ($null -ne $S.interruptedAt) { Start-Exit $t 0.3 'done' 'interrupted' }
-            else { $S.phase = 'stare'; $S.stareStart = $t; $S.stareLength = 2.0 }
+            $S.phase = 'stare'; $S.stareStart = $t; $S.stareLength = 2.0
           }
         }
         'stare' {
-          if ($isKeyed) { Start-Exit $t 0.3 'done' ''; break }
-          if ($t - $S.stareStart -ge $S.stareLength) { Start-Exit $t 1.8 'done' '' }
+          if ($t - $S.stareStart -ge $S.stareLength) {
+            $why = ''; if ($null -ne $S.interruptedAt) { $why = 'interrupted' }
+            Start-Exit $t 1.8 'done' $why
+          }
         }
         'exit' {
           if (-not $S.isHaze -or $t - $S.exitStart -ge $S.exitLength) { Stop-Line; return }
@@ -1204,7 +1202,7 @@ function Read-Ears {
   $line = $null
   while ($script:ears.Lines.TryDequeue([ref]$line)) {
     if ($line -match '"t": "ears"') {
-      try { $state = $line | ConvertFrom-Json; $script:earsState = "$($state.state) (mic: $($state.mic); computer: $($state.loop))" } catch { }
+      try { $state = $line | ConvertFrom-Json; $script:earsState = "$($state.state) (mic: $($state.mic); computer: $($state.loop))"; if ($state.learned) { $script:earsState += '; knows your voice' } else { $script:earsState += '; does not know your voice yet (/hal learn)' } } catch { }
     }
     [Console]::Out.WriteLine($line)
   }
@@ -1251,6 +1249,7 @@ function Read-Inbox {
         $script:earsWanted = [bool]$msg.on
         if ($script:earsWanted) { $script:earsStarts = @(); Start-Ears; if ($msg.override) { Send-Ears '{"override": true}' } } else { Stop-Ears }
       }
+      'learn' { Send-Ears (@{ learn = [string]$msg.step } | ConvertTo-Json -Compress) }
       'glow' { Set-Glow ([bool]$msg.on) }
       'render' {
         $path = [string]$msg.path

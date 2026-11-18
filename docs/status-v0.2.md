@@ -8,7 +8,7 @@ Where the build stands against [plan-v0.2.md](plan-v0.2.md): steps 1–4 are don
 |---|---|
 | 1 | Tone fixed (no level 0, no stress rule, no sweet lines); mood moves by itself between 1 and a ceiling (default 3), levels cumulative; spoken line = last line, ≤ 18 words; style filter with forbidden list, last 30 lines, yardstick; character resent after `/clear` and compaction |
 | 2 | One persistent process per PC (`hal-host.ps1`), inbox + stdout protocol, voice processing chain, haze window per monitor sized to the screen, flash-safe movement, `/hal check`; the eye redesigned as a 7-blade diaphragm |
-| 3 | Choreography (entrance, voice ≥ 1.4 s, pause before uncomfortable lines, stare, exit with a fading red point), typing wins, the band above the prompt with attention-based gaze (blink on Enter, per-tool directions, reading along), haze budget 4/hour, eye-only appearances at level 3, side pane optional |
+| 3 | Choreography (entrance, voice ≥ 1.4 s, pause before uncomfortable lines, stare, exit with a fading red point), typing no longer wins (see deviations), the band above the prompt with attention-based gaze (blink on Enter, per-tool directions, reading along), haze budget 4/hour, eye-only appearances at level 3, side pane optional |
 | 4 | Blind listening test; Kokoro **am_michael** kept warm in a Python helper; house tone under the full haze; `"..."` → 700 ms silence; `tools/setup-voice.ps1`. Later the Piper voice **kestrin** (about 0.1 s per line), from this repository's release `voice-kestrin` |
 | 5 | Listening along, built (see step 5 below for what is tested) |
 | 6 | Host and dossier, built: counts, fact block, `/hal dossier`, reception, farewell, bookkeeping in the status line, Esc as hidden context |
@@ -22,7 +22,7 @@ Owner decisions recorded in the plan: voice am_michael (replaced by **kestrin**,
 - **Fallback voice.** The plan says no fallback voice. When no neural voice is *set up* on a machine, the Windows voice George speaks, so a fresh install is not mute; `/hal check` says so. When it is set up but fails, HAL shows only the haze and the subtitle, as planned.
 - **No blend.** The plan suggested a blended voice; the owner chose plain am_michael in the blind test, and later the Piper voice kestrin (2026-11-18). Kokoro stays optional (`setup-voice.ps1 -Kokoro`) and speaks when kestrin is missing.
 - **Recent lines.** The full character carries the last 30 spoken lines; the per-prompt note carries the last 12, to keep the context small.
-- **Typing detection** reads key state (`GetAsyncKeyState`) instead of `GetLastInputInfo`, so mouse movement does not interrupt HAL. Lone modifiers do not count.
+- **Keys no longer win** (owner decision, 2026-11-18, after the laptop test): the guest is in HAL's machine, so typing never sends the haze or the eye away; the haze is click-through, so the typing goes on underneath. Key presses during his line are still read (`GetAsyncKeyState`, never hooked) and counted for the dossier. Before, the eye never got past its entrance on the laptop: the owner was always typing when it came.
 - **Inbox polling** every 150 ms instead of a FileSystemWatcher (more robust; a half-written message waits up to 2 s).
 - **No Esc window for spoken commands.** A mod cannot hear Esc at an idle prompt. A command spoken to HAL stands in the prompt box for 1.5 s with "You said: …" in the band; any change to it (typing, clearing it) keeps it from being sent. With a draft already in the box, nothing is sent.
 - **Microphone choice.** A built-in microphone first; else the Windows default, unless that is a virtual device (streaming, routing tools); else the first real one. `/hal mic <name>` picks one.
@@ -58,7 +58,9 @@ Also fixed: `/hal off` in one session now stops HAL's process whoever owns it, a
 - [x] Silero VAD → **multilingual Whisper small** through sherpa-onnx (decision 6). Models to `%LOCALAPPDATA%\hal\models`, fetched and checked by `tools/setup-voice.ps1`.
 - [x] Gate both inputs while HAL speaks, plus a 300 ms tail. *Tested:* his own line through the loopback is not heard.
 - [x] Transcript only in memory, a rolling buffer of five minutes in the mod; nothing on disk, nothing in the debug log.
-- [x] **Addressed:** microphone speech starting with "HAL" (as speech recognition writes it: Hal, Hall, Hey HAL, …) → "You said: …" in the band, 1.5 s in the prompt box, then `$.prompt.submit` with a note that it was spoken. Never from loopback. *To test by voice.*
+- [x] **Addressed:** microphone speech starting with "HAL" (as speech recognition writes it: Hal, Hall, Hell, Hey HAL, …) → "You said: …" in the band, 1.5 s in the prompt box, then `$.prompt.submit` with a note that it was spoken. Never from loopback. *To test by voice.*
+- [x] **His name alone** ("HAL." and a pause): he answers in a word or two by mood ("Yes." · "I heard you." · "I was already listening."), the eye holds you, the band says "HAL listens. Say it.", and the next microphone sentence within 10 s of his answer is the command. *Found on the laptop:* a lone "HAL" was its own speech segment, so the command that followed never began with his name and was treated as overheard.
+- [x] **`/hal learn`**, a spoken walk-through: "Say my name" five times, two sentences of the guest's own, then the result in words and a practice call. `assets/hal_name.py` learns how Whisper writes this guest's "HAL" (the spellings) and keeps a small MFCC print per recording (never the audio) in `%LOCALAPPDATA%\hal\name`; a short segment Whisper could not read is matched by DTW against the prints, with a threshold set between the name's own spread and the guest's ordinary sentences. `/hal forget` deletes it; `/hal check` says whether he knows the voice. *Tested offline* with synthetic speech and noise (names caught, "the hall", "Hello", "All", "Al gedaan" not). *To test by voice.* Tried and dropped: the sherpa-onnx keyword spotter (GigaSpeech 3.3M) missed a lone "HAL" at every threshold and fired on "the hall".
 - [x] **Overheard:** after 75 s of new speech (or 8 s with a salient word), at most one weighing per 5 minutes, Haiku with the last minutes and a small fact block, for one true remark or SILENCE; at most two remarks an hour, never while typing or while HAL works; a full-haze moment; what he said goes with the next prompt as hidden context. *To test.*
 - [x] **Noticed:** seconds of speech per day and input in `$.store` (`heard`), never the words.
 - [x] The listening eye: the aperture narrows and the gaze holds while speech is heard; he looks at you on his name.
@@ -110,6 +112,10 @@ Also fixed: `/hal off` in one session now stops HAL's process whoever owns it, a
 - [ ] `/hal check`; measure the Bluetooth offset per output device (about 150–250 ms) and apply it.
 - [ ] Repeat the listening test on laptop speakers (`tools/listening_test.py`).
 - [ ] *Success* on day 7: HAL still on, haze not switched off, no two spoken lines remembered word for word. The dossier (Esc, haze off, `/hal off`) shows honestly whether it annoys.
+
+### Step 10: HAL sees (planned, owner decision 2026-11-18)
+
+The best experience is with a webcam and a microphone. `/hal see on`, off by default: now and then one frame from the webcam (never video, never on disk) goes to the model for a few plain facts about the room (the light, the time of day it suggests, what is behind the guest, whether they are alone), which HAL may name like any other fact. The camera light shows; HAL does not hide it. Other people are only ever "someone else". The README says plainly that the frame leaves the machine.
 
 ### Smaller leftovers
 

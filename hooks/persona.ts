@@ -250,6 +250,9 @@ export type HalAction =
   | { kind: 'deaf' }
   | { kind: 'mic'; value: string }
   | { kind: 'check' }
+  | { kind: 'learn' }
+  | { kind: 'learn-stop' }
+  | { kind: 'forget' }
   | { kind: 'settings' }
   | { kind: 'dossier' }
   | { kind: 'help' }
@@ -311,6 +314,14 @@ export function parseCommand(args: string): HalAction {
       return { kind: 'mic', value: lowered === 'auto' ? '' : value }
     case 'check':
       return { kind: 'check' }
+    case 'learn':
+      if (lowered === 'stop' || lowered === 'cancel') {
+        return { kind: 'learn-stop' }
+      }
+
+      return lowered === '' ? { kind: 'learn' } : { kind: 'bad', why: 'Learn alone starts it; /hal learn stop ends it.' }
+    case 'forget':
+      return { kind: 'forget' }
     case 'settings':
       return { kind: 'settings' }
     case 'dossier':
@@ -370,7 +381,9 @@ export const HELP = `/hal                      wake HAL, or put him to sleep
 /hal listen               HAL listens along (also during a call, until it ends)
 /hal deaf                 HAL stops listening: both inputs close
 /hal mic <name>|auto      which microphone HAL listens to
-/hal check                which voice, ears and screens HAL uses, and how fast he answers`
+/hal learn                HAL learns how you say his name: a short spoken walk-through
+/hal forget               HAL forgets how you say his name
+/hal check               which voice, ears and screens HAL uses, and how fast he answers`
 
 /** The HAL process's own report, for /hal check. */
 export function describeCheck(report: unknown, isOwner: boolean): string {

@@ -9,6 +9,8 @@ function engine(
   model: string[] = [],
   stored: Record<string, unknown> = {},
   voice = { isDone: false },
+  // The stand-in ears: lines the process writes in answer to a message from the mod.
+  react?: (m: Record<string, unknown>) => string[],
 ) {
   mock.store(on, stored)
   on('session.id', () => ({ value: 's1' }))
@@ -34,8 +36,15 @@ function engine(
   on('process.spawn', async function* () {
     yield { stream: 'stdout', text: '{"t":"ready","pid":1,"voice":"Microsoft George"}\n' }
     const answered = new Set<unknown>()
+    const reacted = new Set<unknown>()
     for (let i = 0; i < 100 && !sent.some(m => m.kind === 'quit'); i++) {
       for (const m of sent) {
+        if (react && !reacted.has(m)) {
+          reacted.add(m)
+          for (const line of react(m)) {
+            yield { stream: 'stdout', text: `${line}\n` }
+          }
+        }
         if (voice.isDone && m.kind === 'say' && !answered.has(m.id)) {
           answered.add(m.id)
           yield { stream: 'stdout', text: `{"t":"done","id":"${String(m.id)}"}\n` }
@@ -58,6 +67,52 @@ function engine(
 // Lets unawaited work finish; the test kit's environment has timers, its types don't.
 const settle = () => new Promise(resolve => (globalThis as any).setTimeout(resolve, 50))
 const said = (sent: Record<string, unknown>[]) => sent.filter(m => m.kind === 'say').map(m => m.text)
+
+test('/hal learn: he leads the way by voice, the ears count, and he answers his name after', async ($: any, on: any) => {
+  const sent: Record<string, unknown>[] = []
+  const ears = (m: Record<string, unknown>): string[] => {
+    if (m.kind !== 'learn') {
+      return []
+    }
+    switch (m.step) {
+      case 'name':
+        return [1, 2, 3, 4, 5].map(got => `{"t":"learn","step":"name","got":${got}}`)
+      case 'other':
+        return [1, 2].map(got => `{"t":"learn","step":"other","got":${got}}`)
+      case 'finish':
+        return [
+          '{"t":"learned","ok":true,"caught":5,"of":5,"spellings":["hell"]}',
+          // Afterwards the guest says only his name.
+          '{"t":"heard","src":"mic","name":true,"text":"","lang":"en","sec":0.6}',
+        ]
+      default:
+        return []
+    }
+  }
+  engine(on, sent, [], {}, { isDone: true }, ears)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: false })
+  await $.command.run({ command: 'hal', args: 'on' })
+  await $.command.run({ command: 'hal', args: 'listen' })
+  const intro = await $.command.run({ command: 'hal', args: 'learn' })
+  expect(String(intro.text)).toContain('HAL learns how you say his name')
+  for (let i = 0; i < 40 && !sent.some(m => m.kind === 'say' && String(m.id).startsWith('ack-')); i++) {
+    await settle()
+  }
+
+  expect(sent.filter(m => m.kind === 'learn').map(m => m.step)).toEqual(['name', 'other', 'finish'])
+  const lines = said(sent)
+  expect(lines).toContain('Say my name. Only my name.')
+  expect(lines).toContain('Enough of my name. Now say something else. Anything of your own.')
+  expect(lines).toContain('Five of five. I know how you say my name now. Call me.')
+  // His name alone, after learning: a short answer, and he listens.
+  expect(sent.some(m => m.kind === 'say' && String(m.id).startsWith('ack-'))).toBe(true)
+  // The model hears what happened with the next prompt, never the words.
+  const next = await $.prompt.submit({ text: 'and now?' })
+  expect((next.context ?? []).join('\n')).toContain('5 of 5 recordings recognised')
+
+  const help = await $.command.run({ command: 'hal', args: 'help' })
+  expect(String(help.text)).toContain('How to call HAL')
+})
 
 test('the character is sent whole, then as a note, and whole again after /clear', async ($: any, on: any) => {
   engine(on, [])

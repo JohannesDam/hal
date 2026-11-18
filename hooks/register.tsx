@@ -14,8 +14,10 @@ import {
   receptionKind,
 } from './dossier'
 import type { Dossier, Git, Moment, Visit } from './dossier'
-import { addressed, hearsName, isSalient, keep, remarkFrom, shouldWeigh, tally, weighRequest } from './ears'
+import { acknowledgement, addressed, ATTEND_MS, hearsName, isSalient, keep, remarkFrom, shouldWeigh, tally, weighRequest } from './ears'
 import type { Heard, HeardTally, ReflectState, Source } from './ears'
+import { advance, bandFor, HOW_TO_CALL, LEARN_INTRO, learnedNote, lineFor, PRACTICE_MS, STEP_TIMEOUT_MS } from './learn'
+import type { Learn, Learned } from './learn'
 import { bandCells, eyeCells } from './eye'
 import { lookFrom, newGazeState, stepGazeState, toolKind } from './gaze'
 import type { Attention, ToolKind } from './gaze'
@@ -100,6 +102,14 @@ let isDeaf = false
 let reflect: ReflectState = { newSec: 0, lastWeighedAt: -Infinity, remarks: [] }
 let isWeighing = false
 let isAddressing = false
+/** After his name alone: until when the next microphone sentence is a command (wall clock). */
+let attendUntil = -Infinity
+/** The acknowledgement on its way; the window starts again once he has finished saying it. */
+let ackId: string | undefined
+let lastAck: string | undefined
+/** /hal learn in progress (learn.ts); undefined otherwise. */
+let learning: Learn | undefined
+let learnSerial = 0
 let saidSerial = 0
 /** The prompt HAL is about to send for you, as you spoke it. */
 let spokenPrompt: string | undefined
@@ -337,7 +347,17 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       break
     case 'heard':
       if ((message.src === 'mic' || message.src === 'loop') && typeof message.text === 'string') {
-        await onHeard($, message.src, message.text, typeof message.sec === 'number' ? message.sec : 0)
+        await onHeard($, message.src, message.text, typeof message.sec === 'number' ? message.sec : 0, message.name === true)
+      }
+      break
+    case 'learn':
+      if (typeof message.got === 'number' && learning && message.step === learning.step) {
+        await onLearnStep($, message.got)
+      }
+      break
+    case 'learned':
+      if (message.forgotten !== true) {
+        await onLearned($, message as Learned)
       }
       break
     case 'enter':
@@ -353,6 +373,11 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       isAway = false
       await setMood($, 'idle')
       lookAtYou()
+      if (ackId !== undefined && message.id === ackId) {
+        ackId = undefined
+        attendUntil = (await $.clock.now()) + ATTEND_MS
+        lookAtYou(ATTEND_MS)
+      }
       await reveal($, sayLines.get(String(message.id)))
       sayLines.delete(String(message.id))
       sayHazes.delete(String(message.id))
@@ -754,25 +779,44 @@ function stopWatch() {
   watchTimer = undefined
 }
 
-async function onHeard($: $, src: Source, text: string, sec: number) {
+async function onHeard($: $, src: Source, text: string, sec: number, isName = false) {
   const settings = await read($, settingsAtom)
   if (!settings.isOn || !settings.listen) {
     return
   }
   const at = await $.clock.now()
-  heard = keep(heard, { at, src, text, sec })
+  if (text) {
+    heard = keep(heard, { at, src, text, sec })
+  }
   // The dossier keeps how long, when and from where; never the words.
   await $.store.set('heard', tally(await $.store.get('heard'), await today($), src, sec))
-  if (hearsName(text)) {
+  if (isName || hearsName(text)) {
     lookAtYou(1800)
   }
   // Commands come from the microphone only: a video can never instruct Claude Code.
+  // The ears recognise the name as this guest says it (/hal learn); the text is then the rest.
+  if (src === 'mic' && isName) {
+    if (text) {
+      attendUntil = -Infinity
+      ackId = undefined
+      void onAddressed($, text).catch(() => undefined)
+    } else {
+      void onName($, settings).catch(() => undefined)
+    }
+
+    return
+  }
   if (src === 'mic') {
     const command = addressed(text)
-    if (command !== undefined) {
-      if (command) {
-        void onAddressed($, command).catch(() => undefined)
-      }
+    if (command === '') {
+      void onName($, settings).catch(() => undefined)
+
+      return
+    }
+    if (command !== undefined || at < attendUntil) {
+      attendUntil = -Infinity
+      ackId = undefined
+      void onAddressed($, command ?? text.trim()).catch(() => undefined)
 
       return
     }
@@ -781,6 +825,99 @@ async function onHeard($: $, src: Source, text: string, sec: number) {
   if (settings.talk !== 'never' && !isWeighing && shouldWeigh(reflect, at, isSalient(text))) {
     void weigh($).catch(() => undefined)
   }
+}
+
+/**
+ * "HAL." alone from the microphone: he answers in a word or two, the eye holds you, and the
+ * next sentence you say within ATTEND_MS (counted from the end of his answer) is the command.
+ */
+async function onName($: $, settings: HalSettings) {
+  const now = await $.clock.now()
+  const isAttending = now < attendUntil
+  attendUntil = now + ATTEND_MS
+  lookAtYou(ATTEND_MS)
+  await showSaid($, 'HAL listens. Say it.', ATTEND_MS)
+  if (isAttending || isAddressing) {
+    return
+  }
+  const line = acknowledgement(await currentLevel($, settings), lastAck, Math.random())
+  lastAck = line
+  ackId = await sayPlain($, line, 'ack')
+}
+
+/** A plain line: no haze, no budget, not kept among his remarks. Silent during a call. */
+async function sayPlain($: $, line: string, prefix: string): Promise<string | undefined> {
+  if (desk.micBusy) {
+    return undefined
+  }
+  await ensureHost($)
+  messageCount += 1
+  const id = `${prefix}-${messageCount}`
+  await send($, { kind: 'say', id, text: speakable(line), haze: false, strength: 0.4, pauseMs: 250 })
+
+  return id
+}
+
+// ---------- /hal learn (learn.ts): the ears count, the mod leads the way ----------
+
+async function setLearning($: $, next: Learn | undefined) {
+  learning = next
+  learnSerial += 1
+  await showSaid($, next ? bandFor(next) : '', next ? 0 : 1)
+  if (next) {
+    // A step nobody answers ends the walk-through; the practice simply fades.
+    const serial = learnSerial
+    const wait = next.step === 'practice' ? PRACTICE_MS : STEP_TIMEOUT_MS
+    void (async () => {
+      await $.clock.sleep(wait)
+      if (serial === learnSerial && learning) {
+        if (learning.step !== 'practice') {
+          await send($, { kind: 'learn', step: 'cancel' })
+          await showSaid($, 'HAL stopped learning: nothing came for a minute. /hal learn starts again.', 8000)
+          learning = undefined
+          learnSerial += 1
+
+          return
+        }
+        await setLearning($, undefined)
+      }
+    })().catch(() => undefined)
+  }
+}
+
+async function startLearning($: $, settings: HalSettings) {
+  await ensureHost($)
+  await askEars($, settings, false)
+  await send($, { kind: 'learn', step: 'name' })
+  await setLearning($, { step: 'name', got: 0, at: await $.clock.now() })
+  lookAtYou(4000)
+  await sayPlain($, lineFor.start, 'learn')
+}
+
+async function onLearnStep($: $, got: number) {
+  if (!learning) {
+    return
+  }
+  const step = advance(learning, got, await $.clock.now())
+  if (step.send) {
+    await send($, { kind: 'learn', step: step.send })
+  }
+  await setLearning($, step.next)
+  lookAtYou(2500)
+  if (step.say) {
+    await sayPlain($, step.say, 'learn')
+  }
+}
+
+async function onLearned($: $, result: Learned) {
+  if (!learning || learning.step !== 'weighing') {
+    return
+  }
+  notes.push(learnedNote(result))
+  lookAtYou(4000)
+  await sayPlain($, lineFor.result(result), 'learn')
+  const isUsable = typeof result.caught === 'number' && result.caught > 0
+  await setLearning($, isUsable ? { step: 'practice', got: 0, at: await $.clock.now() } : undefined)
 }
 
 /**
@@ -814,6 +951,11 @@ async function onAddressed($: $, command: string) {
     }
     await $.prompt.fill({ text: '' })
     await showSaid($, '', 0)
+    if (learning?.step === 'practice') {
+      // The first real call ends the walk-through.
+      learning = undefined
+      learnSerial += 1
+    }
     spokenPrompt = command
     await $.prompt.submit({ text: command, asUser: true })
   } finally {
@@ -1031,8 +1173,8 @@ export const register: Register = on => {
     const started = await next(e)
     await $.command.register({
       name: 'hal',
-      description: 'HAL: wake or quiet the character; ceiling, talk, haze, eye, name, check',
-      argumentHint: '[on|off|ceiling 1-3|talk often|sometimes|rarely|never|haze on|off|eye on|off|name|say|check|help]',
+      description: 'HAL: wake or quiet the character; ceiling, talk, haze, eye, name, learn, check',
+      argumentHint: '[on|off|ceiling 1-3|talk often|sometimes|rarely|never|haze on|off|eye on|off|name|say|learn|forget|check|help]',
     })
     isNameUsed = false
     isDetailUsed = false
@@ -1095,7 +1237,33 @@ export const register: Register = on => {
 
     switch (action.kind) {
       case 'help':
-        return { text: HELP }
+        return { text: `${HELP}\n\n${HOW_TO_CALL}` }
+      case 'learn': {
+        if (!current.isOn) {
+          return { text: 'HAL learns once he is awake (/hal).' }
+        }
+        if (!current.listen) {
+          return { text: 'HAL is deaf. /hal listen first, then /hal learn.' }
+        }
+        await startLearning($, current)
+
+        return { text: LEARN_INTRO }
+      }
+      case 'learn-stop':
+        if (learning) {
+          await send($, { kind: 'learn', step: 'cancel' })
+          await setLearning($, undefined)
+        }
+
+        return { text: 'HAL stopped learning. What he knew before stays.' }
+      case 'forget':
+        if (learning) {
+          await setLearning($, undefined)
+        }
+        await ensureHost($)
+        await send($, { kind: 'learn', step: 'forget' })
+
+        return { text: 'HAL has forgotten how you say his name. He still answers to "HAL" when speech recognition writes it so. /hal learn teaches him again.' }
       case 'settings':
         return { text: `${describe(current, level)}\n\n${HELP}` }
       case 'dossier': {
