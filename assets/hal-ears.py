@@ -172,7 +172,9 @@ class Source(threading.Thread):
         config.silero_vad.model = str(MODELS / "vad" / "silero_vad.onnx")
         config.silero_vad.threshold = 0.5
         config.silero_vad.min_silence_duration = 0.6
-        config.silero_vad.min_speech_duration = 0.3
+        # "stop" has little voice in it (a hiss, a short vowel, a click): at a laptop's distance
+        # 0.3 s dropped it. The microphone keeps short words; the computer's audio does not.
+        config.silero_vad.min_speech_duration = 0.15 if self.kind == "mic" else 0.3
         config.silero_vad.max_speech_duration = 20
         config.sample_rate = RATE
         return sherpa_onnx.VoiceActivityDetector(config, buffer_size_in_seconds=60)

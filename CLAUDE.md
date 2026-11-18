@@ -51,6 +51,7 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 - Settings live in `$.store`, shared by every session on the machine; the atom is per session. The store is the truth: `followStore` brings a session in line, and `/hal off` always sends `quit`.
 - Whisper writes a lone "HAL" as "Hell." more often than "Hal."; a lone name is its own VAD segment, so the command that follows never starts with his name (hence the attend window after his answer).
 - The sherpa-onnx keyword spotter (GigaSpeech 3.3M) misses a lone "HAL" at every threshold and fires on "the hall": not usable for his name.
+- Silero VAD with `min_speech_duration` 0.3 s drops a quiet "stop" (little voice in it); the microphone uses 0.15 s.
 - Raw MFCC + DTW does not survive noise: drop c0, add the room's floor to each band before the log, and normalise mean and variance per recording.
 - `$.model.complete` takes text only (no images) in this build: the webcam is measured locally instead.
 - opencv-python-headless 4.12 pulls numpy below 2.3; pip replaces numpy in the venv while HAL's processes hold the old one (a harmless `~umpy` folder may stay behind).
