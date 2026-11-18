@@ -43,7 +43,7 @@ import {
   PRACTICE_MS,
   STEP_TIMEOUT_MS,
   windowBand,
-  windowMs,
+  WINDOW_MS,
 } from './learn'
 import type { Learn, Learned } from './learn'
 import { LOOK_EVERY_MS, parseSeen, sightFacts } from './sight'
@@ -390,20 +390,15 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       break
     case 'heard':
       if ((message.src === 'mic' || message.src === 'loop') && typeof message.text === 'string') {
-        // A learned lone word ("Go!") opens a conversation; inside one it is ordinary speech.
-        if (conversation && typeof message.alone === 'string' && message.alone) {
-          await onHeard($, message.src, message.alone, typeof message.sec === 'number' ? message.sec : 0)
-        } else {
-          await onHeard(
-            $,
-            message.src,
-            message.text,
-            typeof message.sec === 'number' ? message.sec : 0,
-            message.name === true,
-            message.stop === true,
-            message.wake === true,
-          )
-        }
+        await onHeard(
+          $,
+          message.src,
+          message.text,
+          typeof message.sec === 'number' ? message.sec : 0,
+          message.name === true,
+          message.stop === true,
+          message.wake === true,
+        )
       }
       break
     case 'learn':
@@ -1073,8 +1068,8 @@ async function setLearning($: $, next: Learn | undefined) {
 async function startLearning($: $, settings: HalSettings) {
   await ensureHost($)
   await askEars($, settings, false)
-  await send($, { kind: 'learn', step: 'name' })
-  await setLearning($, { step: 'name', got: 0, at: await $.clock.now() })
+  await send($, { kind: 'learn', step: 'wake' })
+  await setLearning($, { step: 'wake', got: 0, at: await $.clock.now() })
   lookAtYou(4000)
   windowMisses = 0
   levelChanges = 0
@@ -1090,20 +1085,21 @@ async function sayLearnLine($: $, line: string) {
   }
 }
 
-/** The bar empties while he listens; the word is said once inside it. Nothing: he asks again. */
+/** The bar empties while he listens; the sentence is said once inside it. Nothing: he asks again. */
 async function openListenWindow($: $) {
   const start = learning
-  if (!start || (start.step !== 'name' && start.step !== 'stop' && start.step !== 'other')) {
+  if (!start || (start.step !== 'wake' && start.step !== 'sleep')) {
     return
   }
+  const listening = { ...start, step: start.step }
   windowSerial += 1
   const serial = windowSerial
-  const frames = windowMs(start.step) / 250
+  const frames = WINDOW_MS / 250
   for (let i = 0; i <= frames; i++) {
     if (serial !== windowSerial || learning !== start) {
       return
     }
-    await showSaid($, windowBand(start, 1 - i / frames), 0)
+    await showSaid($, windowBand(listening, 1 - i / frames), 0)
     await $.clock.sleep(250)
   }
   if (serial !== windowSerial || learning !== start) {
@@ -1124,12 +1120,12 @@ async function onLearnStep($: $, got: number, peak?: number) {
     return
   }
   // The level first: a clipping voice loses its H and its L. Turn it down, start the names again.
-  const factor = learning.step === 'name' ? levelFactor(peak, levelChanges) : undefined
+  const factor = learning.step === 'wake' ? levelFactor(peak, levelChanges) : undefined
   if (factor !== undefined) {
     levelChanges += 1
     await send($, { kind: 'mic-level', factor })
-    await send($, { kind: 'learn', step: 'name' })
-    await setLearning($, { step: 'name', got: 0, at: await $.clock.now() })
+    await send($, { kind: 'learn', step: 'wake' })
+    await setLearning($, { step: 'wake', got: 0, at: await $.clock.now() })
     windowMisses = 0
     await sayLearnLine($, levelLine(factor))
 

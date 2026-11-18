@@ -14,13 +14,14 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 ## Layout
 
 - `hooks/register.tsx` the mod · `persona.ts` character text, style filter, commands · `mood.ts` mood and signals · `gaze.ts` where the eye looks · `eye.ts` the band and pane eye in half-block pixels · `ears.ts` what the mod does with what HAL hears · `learn.ts` the `/hal learn` walk-through · `conversation.ts` a conversation from "HAL" to "stop" · `dossier.ts` the notes and the fact block · `moments.ts` HAL's own lines (reception, waking, initiative, farewell) and when he may speak unprompted · `hal.test.tsx` and `units.test.ts` tests.
-- `assets/hal-host.ps1` one process per PC: voice, processing chain, haze windows, choreography; inbox `%LOCALAPPDATA%\hal\inbox` in, JSON lines on stdout out. `assets/hal-voice.py` + `hal_piper.py` the warm neural voice (Piper `kestrin`; `hal_kokoro.py` for Kokoro `am_michael` when kestrin is missing). `assets/hal-ears.py` the ears (mic + loopback, VAD, Whisper), started by the host while the mod asks HAL to listen; `hal_name.py` his name as the guest says it (`/hal learn`, kept in `%LOCALAPPDATA%\hal\name`). `assets/hal-sight.py` one webcam look reduced to numbers (`/hal see`), run by the mod through `$.process.run`; `hooks/sight.ts` turns them into facts. `assets/hal-farewell.ps1` the last word, started through WMI by the host. `assets/hal.ps1` one line from a shell.
+- `assets/hal-host.ps1` one process per PC: voice, processing chain, haze windows, choreography; inbox `%LOCALAPPDATA%\hal\inbox` in, JSON lines on stdout out. `assets/hal-voice.py` + `hal_piper.py` the warm neural voice (Piper `kestrin`; `hal_kokoro.py` for Kokoro `am_michael` when kestrin is missing). `assets/hal-ears.py` the ears (mic + loopback, VAD, Whisper), started by the host while the mod asks HAL to listen; `hal_name.py` how the guest calls him, text only: the wake and sleep sentences (`/hal learn` keeps Whisper's text of them in `%LOCALAPPDATA%\hal\name`), "stop", and "HAL, …". `assets/hal-sight.py` one webcam look reduced to numbers (`/hal see`), run by the mod through `$.process.run`; `hooks/sight.ts` turns them into facts. `assets/hal-farewell.ps1` the last word, started through WMI by the host. `assets/hal.ps1` one line from a shell.
 - `tools/setup-voice.ps1` voice + Python environment · `tools/listening_test.py` the blind test · `tools/render-pictures.ps1` the README pictures in `docs/images`, rendered offscreen from `hooks/eye.ts` and the host's haze (rerun after changing either; never a screenshot of a real screen).
 - Models and the venv live in `%LOCALAPPDATA%\hal`, never in the repo. The kestrin model is a GitHub release asset (`voice-kestrin`); `setup-voice.ps1` pins its SHA-256.
 
 ## Checks
 
-- `claude plugin validate .` and `claude plugin test .` after every change to `hooks/`.
+- `claude plugin validate .` and `claude plugin test .` after every change to `hooks/`; `python -m unittest discover -s tests` (the venv's Python) after every change to `hal_name.py` or the ears.
+- Release with `tools/release.ps1 -Version x.y.z [-Tag -Notes file]`: a new version is the only way `claude plugin update` picks up a change.
 - The host from a shell: `powershell -NoProfile -STA -ExecutionPolicy Bypass -File assets\hal-host.ps1 -Say "Nothing was deleted. I checked." -IgnoreKeys` (`-IgnoreKeys` keeps test key presses out of the count; keys never end a line, by design: the guest cannot send the host away).
 
 ## Gotchas met so far
@@ -54,7 +55,7 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 - The ears open 0.6 s after his voice ends, inside the stare: at once (0.3.2) they heard his own last word back through the laptop speakers (sound-card latency, echo); after the whole stare (before 0.3.2) a guest's quick answer was lost.
 - Piper swallows a weak opening vowel ("Again." sounds like "gain"): his short lines start on a strong syllable.
 - Silero VAD with `min_speech_duration` 0.3 s drops a quiet "stop" (little voice in it); the microphone uses 0.15 s.
-- Raw MFCC + DTW does not survive noise: drop c0, add the room's floor to each band before the log, and normalise mean and variance per recording.
+- A lone "HAL" cannot be recognised reliably on a laptop microphone: spellings, learned lone words and MFCC/DTW prints were all tried and removed (0.6). Whole sentences work: keep it that way unless a real wake-word engine comes in.
 - `$.model.complete` takes text only (no images) in this build: the webcam is measured locally instead.
 - opencv-python-headless 4.12 pulls numpy below 2.3; pip replaces numpy in the venv while HAL's processes hold the old one (a harmless `~umpy` folder may stay behind).
 - PowerShell 5.1's `Set-Content -Encoding utf8` mangles `▁` and other non-ANSI text read from a script: write such files with an editor or Python.

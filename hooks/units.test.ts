@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { beginVisit, endVisit, factBlock, parseGit, readDossier, receptionKind } from './dossier'
 import { acknowledgement, addressed, keep, remarkFrom, shouldWeigh, tally } from './ears'
 import { closing, conversationNote, isLook, isSleepPhrase, isTypedStop, isWakePhrase, presenceStrength } from './conversation'
-import { advance, bandFor, learnedNote, levelFactor, levelLine, lineFor, NAME_TIMES, NOTHING_HEARD, OTHER_TIMES, STOP_TIMES, windowBand, windowMs } from './learn'
+import { advance, bandFor, learnedNote, levelFactor, levelLine, lineFor, NOTHING_HEARD, SLEEP_TIMES, WAKE_TIMES, WINDOW_MS, windowBand } from './learn'
 import type { Learn } from './learn'
 import { initiative, newWatch, noteTest, testKey } from './moments'
 import { judgeLine } from './persona'
@@ -73,40 +73,31 @@ test('a conversation: typed stop, look, the haze settling in, the closing lines'
   expect(judgeLine('Shall I look again?', { ...ctx, allowQuestion: true }).isOk).toBe(false)
 })
 
-test('/hal learn walks through five names, three stops, two sentences, the weighing and the practice', async () => {
-  let learn: Learn = { step: 'name', got: 0, at: T0 }
+test('/hal learn walks through the wake sentence, the sleep sentence, the weighing and the practice', async () => {
+  let learn: Learn = { step: 'wake', got: 0, at: T0 }
   const said: string[] = []
   const sent: string[] = []
-  for (let got = 1; got <= NAME_TIMES; got++) {
+  for (let got = 1; got <= WAKE_TIMES; got++) {
     const step = advance(learn, got, T0 + got)
     learn = step.next
     if (step.say) said.push(step.say)
     if (step.send) sent.push(step.send)
   }
-  expect(learn.step).toBe('stop')
-  expect(sent).toEqual(['stop'])
-  expect(said.at(-1)).toBe(lineFor.toStop)
-  for (let got = 1; got <= STOP_TIMES; got++) {
+  expect(learn.step).toBe('sleep')
+  expect(sent).toEqual(['sleep'])
+  expect(said.at(-1)).toBe(lineFor.toSleep)
+  for (let got = 1; got <= SLEEP_TIMES; got++) {
     const step = advance(learn, got, T0 + 5 + got)
-    learn = step.next
-    if (step.say) said.push(step.say)
-    if (step.send) sent.push(step.send)
-  }
-  expect(learn.step).toBe('other')
-  expect(said.at(-1)).toBe(lineFor.toOther)
-  for (let got = 1; got <= OTHER_TIMES; got++) {
-    const step = advance(learn, got, T0 + 10 + got)
     learn = step.next
     if (step.send) sent.push(step.send)
   }
   expect(learn.step).toBe('weighing')
-  expect(sent).toEqual(['stop', 'other', 'finish'])
-  expect(bandFor({ step: 'name', got: 2, at: T0 })).toBe('HAL learns · say "HAL, please wake up" · 2 of 3')
+  expect(sent).toEqual(['sleep', 'finish'])
+  expect(bandFor({ step: 'wake', got: 2, at: T0 })).toBe('HAL learns · say "HAL, please wake up" · 2 of 3')
   // The listening window: the bar empties while he listens.
-  expect(windowBand({ step: 'name', got: 2, at: T0 }, 1)).toBe('HAL listens · say "HAL, please wake up" now ▕████████████████▏ 2 of 3')
-  expect(windowBand({ step: 'stop', got: 0, at: T0 }, 0.5)).toBe('HAL listens · say "HAL, go to sleep" now ▕████████░░░░░░░░▏ 0 of 3')
-  expect(windowBand({ step: 'other', got: 1, at: T0 }, 0)).toBe('HAL listens · say a sentence now ▕░░░░░░░░░░░░░░░░▏ 1 of 2')
-  expect(windowMs('other') > windowMs('name')).toBe(true)
+  expect(windowBand({ step: 'wake', got: 2, at: T0 }, 1)).toBe('HAL listens · say "HAL, please wake up" now ▕████████████████▏ 2 of 3')
+  expect(windowBand({ step: 'sleep', got: 0, at: T0 }, 0.5)).toBe('HAL listens · say "HAL, go to sleep" now ▕████████░░░░░░░░▏ 0 of 3')
+  expect(WINDOW_MS >= 4000).toBe(true)
   // The level: a clipping voice is turned down, a drowning one up, at most three times.
   expect(levelFactor(0.97, 0)).toBe(0.65)
   expect(levelFactor(0.02, 1)).toBe(1.5)
@@ -116,7 +107,7 @@ test('/hal learn walks through five names, three stops, two sentences, the weigh
   expect(levelLine(0.65).startsWith('Too loud')).toBe(true)
   expect(/^[A-Z][a-z]+ /.test(NOTHING_HEARD) && !/^(A|E|I|O|U)/.test(NOTHING_HEARD)).toBe(true)
   // What he says stays inside his own rules: no exclamation marks, short, numbers as words.
-  for (const line of [lineFor.start, lineFor.toOther, lineFor.result({ ok: true, caught: 5, of: 5 }), lineFor.result({ ok: false, caught: 2, of: 5 }), lineFor.result({ ok: false, why: 'x' })]) {
+  for (const line of [lineFor.start, lineFor.toSleep, lineFor.result({ ok: true, caught: 5, of: 5 }), lineFor.result({ ok: false, caught: 2, of: 5 }), lineFor.result({ ok: false, why: 'x' })]) {
     expect(/!|\d/.test(line)).toBe(false)
     expect(line.split(/\s+/).length <= 18).toBe(true)
   }

@@ -123,6 +123,10 @@ After many patches the lone "HAL" stayed unreliable on the laptop (one syllable,
 
 About one reply in three, once the work is done, the spoken line may be one quiet personal question he should not be able to ask, ending with "?" (the style filter allows one question only inside a conversation). It rests only on facts in his notes, now including how long the conversation has been open; sensitive subjects are off limits and a non-answer is never pressed. With `/hal see on` he looks when the conversation opens and every 90 seconds while it lasts.
 
+### Cleanup (0.6.0)
+
+What the day of live tests left behind is gone: the acoustic prints and DTW, the learned lone words, the "stop" prints and the walk-through's step for ordinary sentences (it only calibrated the prints). `hal_name.py` is text only (no numpy); the walk-through is "HAL, please wake up" three times, "HAL, go to sleep" three times, the result. Its steps are called `wake` and `sleep` everywhere. The ears' text side has tests (`tests/test_ears.py`), and `tools/release.ps1` does a release in one go.
+
 ### Step 10: HAL sees (built; live test open; owner decision 2026-11-18)
 
 The best experience is with a webcam and a microphone.

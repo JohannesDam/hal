@@ -148,14 +148,16 @@ Off until you switch it on. Then HAL takes one look through the webcam when he w
 - `assets/hal-voice.py` with `assets/hal_piper.py` and `assets/hal_kokoro.py`: the neural voice, kept warm; one request per line on stdin, one wav per answer.
 - `assets/hal-ears.py`: the ears, started by HAL's process while he listens: the microphone and the loopback (soundcard, WASAPI), a VAD per input, Whisper small for both; it reports speech starting and stopping and what was said, is gated while HAL speaks, and goes deaf while another app holds the microphone. `hooks/ears.ts`: what the mod does with it (spoken commands, his name alone, overheard remarks, the tally per day).
 - `assets/hal-sight.py`: one look through the webcam, reduced to numbers (faces, distance, side, light, warmth, backlight); the frame never leaves the process. `hooks/sight.ts`: those numbers as facts, and what changed between two looks.
-- `assets/hal_name.py`: his name as this guest says it: the spellings and acoustic prints from `/hal learn`, and the match (DTW) for short segments Whisper could not read. `hooks/learn.ts`: the walk-through's steps, lines and texts. `hooks/conversation.ts`: a conversation from "HAL" to "stop" (the typed stop, "look", how the haze settles in, his closing words); the host keeps the haze and the eye on screen between his lines ("hold").
+- `assets/hal_name.py`: how this guest calls him, as text only: the wake and sleep sentences (and near misses of the ones `/hal learn` kept), "stop", and "HAL, …" in one breath. `hooks/learn.ts`: the walk-through's steps, lines and texts. `hooks/conversation.ts`: a conversation from "HAL" to "stop" (the typed stop, "look", how the haze settles in, his closing words); the host keeps the haze and the eye on screen between his lines ("hold").
 - `tools/setup-voice.ps1`: downloads the voice, the speech models and the face model (each checked by SHA-256) and builds the Python environment.
 - `tools/render-pictures.ps1` with `tools/render-terminal.mjs`: renders the pictures in `docs/images` from the mod's own drawing code, offscreen (Node 22.6 or newer, Microsoft Edge). Run it again when the eye or the haze changes.
 - `assets/hal.ps1`: one line from a shell, for testing: `powershell -NoProfile -STA -ExecutionPolicy Bypass -File hal.ps1 -Text "Nothing was deleted. I checked."`. When HAL's process runs, the line goes to it.
 
 - `tools/listening_test.py`: the blind listening test for the voice. It renders eight fixed lines with stock Kokoro voices, two blends of them, and the processed Windows voice, runs all of them through HAL's voice chain, and writes `%LOCALAPPDATA%\hal\listening\listening.html`, where the voices are only letters. Setup: Kokoro multi-lang v1.0 from the [sherpa-onnx TTS models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models) under `%LOCALAPPDATA%\hal\models\kokoro`, and a venv with `pip install sherpa-onnx numpy` at `%LOCALAPPDATA%\hal\venv`.
 
-Tests: `claude plugin test .` runs `hooks/hal.test.tsx` and `hooks/units.test.ts`.
+Tests: `claude plugin test .` runs `hooks/hal.test.tsx` and `hooks/units.test.ts`; the ears' text side has its own, `python -m unittest discover -s tests` with the venv's Python.
+
+Releasing: `tools/release.ps1 -Version 0.6.0 -Tag -Notes notes.md` runs every check, sets the version, commits, tags, pushes, publishes the GitHub release and updates the plugin on this machine.
 
 ## Next
 

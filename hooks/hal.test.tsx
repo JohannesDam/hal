@@ -72,24 +72,22 @@ function engine(
 const settle = () => new Promise(resolve => (globalThis as any).setTimeout(resolve, 50))
 const said = (sent: Record<string, unknown>[]) => sent.filter(m => m.kind === 'say').map(m => m.text)
 
-test('/hal learn: he leads the way by voice, the ears count, and he answers his name after', async ($: any, on: any) => {
+test('/hal learn: he leads the way by voice, the ears count, and and he comes when woken', async ($: any, on: any) => {
   const sent: Record<string, unknown>[] = []
   const ears = (m: Record<string, unknown>): string[] => {
     if (m.kind !== 'learn') {
       return []
     }
     switch (m.step) {
-      case 'name':
-        return [1, 2, 3, 4, 5].map(got => `{"t":"learn","step":"name","got":${got}}`)
-      case 'stop':
-        return [1, 2, 3].map(got => `{"t":"learn","step":"stop","got":${got}}`)
-      case 'other':
-        return [1, 2].map(got => `{"t":"learn","step":"other","got":${got}}`)
+      case 'wake':
+        return [1, 2, 3].map(got => `{"t":"learn","step":"wake","got":${got}}`)
+      case 'sleep':
+        return [1, 2, 3].map(got => `{"t":"learn","step":"sleep","got":${got}}`)
       case 'finish':
         return [
-          '{"t":"learned","ok":true,"caught":5,"of":5,"spellings":["hell"]}',
-          // Afterwards the guest says only his name.
-          '{"t":"heard","src":"mic","name":true,"text":"","lang":"en","sec":0.6}',
+          '{"t":"learned","ok":true,"caught":3,"of":3,"stop_caught":3,"stop_of":3}',
+          // Afterwards the guest wakes him.
+          '{"t":"heard","src":"mic","wake":true,"text":"","lang":"en","sec":1.8}',
         ]
       default:
         return []
@@ -105,19 +103,18 @@ test('/hal learn: he leads the way by voice, the ears count, and he answers his 
     await settle()
   }
 
-  expect(sent.filter(m => m.kind === 'learn').map(m => m.step)).toEqual(['name', 'stop', 'other', 'finish'])
+  expect(sent.filter(m => m.kind === 'learn').map(m => m.step)).toEqual(['wake', 'sleep', 'finish'])
   const lines = said(sent)
   expect(lines).toContain('Wake me. Say: HAL, please wake up.')
   expect(lines).toContain('Now send me away. Say: HAL, go to sleep.')
-  expect(lines).toContain('That is enough. Now say something else. Anything of your own.')
-  expect(lines).toContain('Five of five. I know how you wake me now. Do it, and I will come.')
+  expect(lines).toContain('Three of three. I know how you wake me now. Do it, and I will come.')
   // His name alone, after learning: a conversation opens, the eye comes with his first words.
   const open = sent.find(m => m.kind === 'presence' && m.on === true)
   expect(typeof open?.text === 'string' && String(open?.text).length > 0).toBe(true)
   // The model hears what happened with the next prompt, never the words; the conversation is open.
   const next = await $.prompt.submit({ text: 'and now?' })
   const context = (next.context ?? []).join('\n')
-  expect(context).toContain('5 of 5 "HAL, please wake up" recognised')
+  expect(context).toContain('3 of 3 "HAL, please wake up" recognised')
   expect(context).toContain('A conversation with HAL is open')
   // "stop" typed alone: nothing reaches the model, he says goodbye, the eye goes.
   const stopped = await $.prompt.submit({ text: 'stop' })

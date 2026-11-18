@@ -9,7 +9,7 @@ writes it down. Nothing is written to disk; the words exist only in the lines be
 stdin, one JSON object per line, from the host:
   {"gate": true|false}   HAL speaks / is done (300 ms tail after false)
   {"override": true}     keep listening while another app holds the microphone, for that call
-  {"learn": "name"|"stop"|"other"|"finish"|"cancel"|"forget"}   /hal learn (hal_name.py)
+  {"learn": "wake"|"sleep"|"finish"|"cancel"|"forget"}   /hal learn (hal_name.py)
 stdout, one JSON object per line:
   {"t": "ears", "state": "listening"|"deaf", "why", "app", "mic", "loop", "learned"}
   {"t": "speech", "src": "mic"|"loop", "on": true|false}
@@ -17,8 +17,8 @@ stdout, one JSON object per line:
   {"t": "heard", "src": "mic", "name": true, "text": <the rest, or "">, "sec"}  addressed to HAL
   {"t": "heard", "src": "mic", "wake": true, "text": ""}   "HAL, please wake up": a conversation opens
   {"t": "heard", "src": "mic", "stop": true, "text": ""}   "stop" alone or "HAL, go to sleep": it ends
-  {"t": "learn", "step": "name"|"stop"|"other", "got": n, "peak": 0..1 (name only)}
-  {"t": "learned", "ok", "caught", "of", "spellings", ...} or {"t": "learned", "forgotten": true}
+  {"t": "learn", "step": "wake"|"sleep", "got": n, "peak": 0..1 (wake only)}
+  {"t": "learned", "ok", "caught", "of", "stop_caught", "stop_of", ...} or {"t": "learned", "forgotten": true}
   {"t": "error", "why"}
 """
 
@@ -249,7 +249,7 @@ class Ears:
         self.sources = [Source("mic", self), Source("loop", self)]
         self.reported = ""
         self.name = Name(MODELS.parent / "name")
-        # /hal learn: {"step": "name"|"other", "names": [(samples, text)], "others": [samples]}
+        # /hal learn: {"step": "wake"|"sleep", "wakes": [text], "sleeps": [text]}
         self.learning: dict | None = None
 
     def report(self) -> None:
@@ -302,58 +302,47 @@ class Ears:
             if kind == "mic" and self.learning is not None:
                 self.learn_segment(segment, "" if noise else text)
                 continue
-            if kind == "mic" and not noise and self.name.is_wake(text):
-                emit({"t": "heard", "src": kind, "wake": True, "text": "", "lang": lang, "sec": sec})
-                continue
-            if kind == "mic" and self.name.is_stop(text, segment, noise):
-                emit({"t": "heard", "src": kind, "stop": True, "text": "", "lang": lang, "sec": sec})
-                continue
-            if kind == "mic":
-                named, rest = self.name.hear(text, segment, noise)
-                if named:
-                    message = {"t": "heard", "src": kind, "name": True, "text": rest, "lang": lang, "sec": sec}
-                    if not noise and self.name.is_alone_call(text):
-                        # A learned lone word ("Go!"): in a conversation it is just speech.
-                        message["alone"] = text
-                    emit(message)
-                    continue
             if noise:
                 continue
+            if kind == "mic":
+                # The sentences decide (hal_name.py): one to open, one to end, then the one-breath
+                # command "HAL, ...". Only the microphone: what the computer plays never calls him.
+                if self.name.is_wake(text):
+                    emit({"t": "heard", "src": kind, "wake": True, "text": "", "lang": lang, "sec": sec})
+                    continue
+                if self.name.is_stop(text):
+                    emit({"t": "heard", "src": kind, "stop": True, "text": "", "lang": lang, "sec": sec})
+                    continue
+                named, rest = self.name.hear(text)
+                if named:
+                    emit({"t": "heard", "src": kind, "name": True, "text": rest, "lang": lang, "sec": sec})
+                    continue
             emit({"t": "heard", "src": kind, "text": text, "lang": lang, "sec": sec})
 
     def learn_segment(self, segment: np.ndarray, text: str) -> None:
-        """/hal learn: the name five times, then ordinary sentences. Nothing is sent as heard."""
+        """/hal learn: "HAL, please wake up" three times, then "HAL, go to sleep". Nothing is sent
+        as heard; only Whisper's text of each is kept, never the audio."""
         learning = self.learning
-        if learning is None:
+        if learning is None or len(segment) / RATE > 4.0:  # the sentence takes two seconds
             return
-        sec = len(segment) / RATE
-        if learning["step"] == "name":
-            if sec > 4.0:  # "HAL, please wake up" takes two seconds; longer is something else
-                return
-            learning["names"].append((segment, text))
+        if learning["step"] == "wake":
+            learning["wakes"].append(text)
             # The peak lets the mod set the microphone's level: above 0.9 the voice clips.
             peak = round(float(np.abs(segment).max()), 3)
-            emit({"t": "learn", "step": "name", "got": len(learning["names"]), "peak": peak})
-        elif learning["step"] == "stop":
-            if sec > 4.0:
-                return
-            learning["stops"].append((segment, text))
-            emit({"t": "learn", "step": "stop", "got": len(learning["stops"])})
-        elif learning["step"] == "other":
-            if sec < 1.0:
-                return
-            learning["others"].append(segment)
-            emit({"t": "learn", "step": "other", "got": len(learning["others"])})
+            emit({"t": "learn", "step": "wake", "got": len(learning["wakes"]), "peak": peak})
+        elif learning["step"] == "sleep":
+            learning["sleeps"].append(text)
+            emit({"t": "learn", "step": "sleep", "got": len(learning["sleeps"])})
 
     def on_learn(self, step: str) -> None:
-        if step == "name":
-            self.learning = {"step": "name", "names": [], "stops": [], "others": []}
-        elif step in ("stop", "other") and self.learning is not None:
+        if step == "wake":
+            self.learning = {"step": "wake", "wakes": [], "sleeps": []}
+        elif step == "sleep" and self.learning is not None:
             self.learning["step"] = step
         elif step == "finish" and self.learning is not None:
             learning, self.learning = self.learning, None
             try:
-                result = self.name.learn(learning["names"], learning["others"], learning["stops"])
+                result = self.name.learn(learning["wakes"], learning["sleeps"])
             except Exception as error:  # never leave the wizard hanging
                 result = {"ok": False, "why": str(error)}
             emit({"t": "learned", **result})
