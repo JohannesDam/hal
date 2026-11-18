@@ -102,6 +102,9 @@ public static class HalNative {
   [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
   // WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
   public static void ClickThrough(IntPtr h) { SetWindowLong(h, -20, GetWindowLong(h, -20) | 0x20 | 0x80000 | 0x80 | 0x8000000); }
+  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+  // Back on top of the topmost band, without moving, sizing or taking focus (NOMOVE|NOSIZE|NOACTIVATE).
+  public static void KeepOnTop(IntPtr h) { SetWindowPos(h, new IntPtr(-1), 0, 0, 0, 0, 0x0002 | 0x0001 | 0x0010); }
   public static IntPtr ActiveMonitor() { return MonitorFromWindow(GetForegroundWindow(), 2); }
   public static IntPtr MonitorOf(IntPtr h) { return MonitorFromWindow(h, 2); }
   [StructLayout(LayoutKind.Sequential)] struct BasicInfo { public IntPtr exit; public IntPtr peb; public IntPtr affinity; public IntPtr priority; public IntPtr pid; public IntPtr parent; }
@@ -758,7 +761,7 @@ $script:S = @{
   started = (NowMs); lastLatencyMs = $null; lastSynthMs = $null; lastCpuPct = $null
   cpuAt = $null; synthStartMs = 0
   # A conversation: the haze and the eye stay between his lines ('hold') until the mod ends it.
-  presence = $false; presenceStrength = 0.5
+  presence = $false; presenceStrength = 0.5; topAt = 0.0
 }
 $rnd = New-Object System.Random
 $clamp = { param($v) [Math]::Max(0.0, [Math]::Min(1.0, [double]$v)) }
@@ -767,7 +770,7 @@ function Start-Next {
   if ($script:S.queue.Count -eq 0) { return }
   $S = $script:S
   $item = $S.queue[0]; $S.queue.RemoveAt(0)
-  if ((NowMs) - [int64]$item.at -gt (Get-LateMs)) { Emit @{ t = 'dropped'; id = $item.id; why = 'late' }; Start-Next; return }
+  if (-not $item.neverLate -and (NowMs) - [int64]$item.at -gt (Get-LateMs)) { Emit @{ t = 'dropped'; id = $item.id; why = 'late' }; Start-Next; return }
   $wasHolding = $S.phase -eq 'hold'
   $S.item = $item
   $S.isEyeOnly = [bool]$item.eyeOnly
@@ -983,7 +986,7 @@ $script:anim.Add_Tick({
           }
           # Keys never send him away: the guest types on, the eye stays. Only counted.
           if ($isKeyed -and $null -eq $S.interruptedAt) { $S.interruptedAt = $t }
-          if ($null -eq $S.speakAt -and (NowMs) - [int64]$item.at -gt (Get-LateMs)) { Start-Exit $t 0.3 'dropped' 'late'; break }
+          if ($null -eq $S.speakAt -and -not $item.neverLate -and (NowMs) - [int64]$item.at -gt (Get-LateMs)) { Start-Exit $t 0.3 'dropped' 'late'; break }
           # The house tone swells in ahead of the first word: playback starts `lead` early.
           if ($S.wav -and -not $S.isPlayed -and $null -ne $S.speakAt -and $t -ge $S.speakAt - $S.lead) {
             $S.player = New-Object System.Media.SoundPlayer (New-Object System.IO.MemoryStream (, $S.wav))
@@ -1044,6 +1047,15 @@ $script:anim.Add_Tick({
         $v = Get-Visual $t $fast
         if ($S.phase -ne 'exit') { $S.vis = $v }
         Update-Eye $t $fast $slow $v
+        # Awake, he stays in front: another topmost window (a call, a notification) can push the
+        # haze down, so every 1.5 s it is put back on top. Click-through, never focused.
+        $wall = $S.clock.Elapsed.TotalSeconds
+        if ($S.phase -ne 'exit' -and $wall - [double]$S.topAt -ge 1.5) {
+          $S.topAt = $wall
+          foreach ($p in $S.windows) {
+            if ($p.win.IsVisible) { [HalNative]::KeepOnTop((New-Object System.Windows.Interop.WindowInteropHelper $p.win).Handle) }
+          }
+        }
       }
     } catch {
       Emit @{ t = 'error'; why = "$_"; at = "$($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())" }
@@ -1332,9 +1344,13 @@ function Read-Inbox {
         }
         if ($msg.on -eq $true -and -not $script:S.presence) {
           $script:S.presence = $true
-          if ($script:S.phase -eq 'idle') {
-            $first = [pscustomobject]@{ kind = 'say'; id = [string]$msg.id; text = [string]$msg.text; eyeOnly = -not [bool]$msg.text; haze = $true; strength = $script:S.presenceStrength; pauseMs = 300; at = (NowMs) }
-            [void]$script:S.queue.Insert(0, $first)
+          # The eye comes with his first words, also when something is still playing (his last
+          # line after "stop", its slow exit): then right after it. Only an eye already holding
+          # needs nothing. Before 0.6.2 this queued only when idle, so a second "please wake up"
+          # soon after "stop" opened a conversation without an eye.
+          if ($script:S.phase -ne 'hold') {
+            $first = [pscustomobject]@{ kind = 'say'; id = [string]$msg.id; text = [string]$msg.text; eyeOnly = -not [bool]$msg.text; haze = $true; strength = $script:S.presenceStrength; pauseMs = 300; at = (NowMs); neverLate = $true }
+            [void]$script:S.queue.Add($first)
           }
         } elseif ($msg.on -eq $false) {
           $script:S.presence = $false

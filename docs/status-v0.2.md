@@ -131,6 +131,10 @@ What the day of live tests left behind is gone: the acoustic prints and DTW, the
 
 The owner: "please wake up" was not always heard, and the first word often fell away. Microphone segments now start 0.3 s earlier (the VAD opens late); a wake or sleep sentence survives a wrong language label; "please wake up" during an open conversation gets a spoken "I am already here." instead of a silent look; and `/hal check` counts the microphone segments thrown away in the last ten minutes, with why (another language, noise), never the words.
 
+### The eye comes back, and stays in front (0.6.2)
+
+A second "please wake up" soon after "stop" opened a conversation without an eye: the host queued the eye only when idle, and his closing line and its slow exit were still running. The eye and his first words are now always queued (after whatever plays) and never dropped as late. While he is on screen, the host puts the haze windows back on top every 1.5 s (SetWindowPos HWND_TOPMOST, no move, no size, no activation): another topmost window can no longer push him down.
+
 ### Step 10: HAL sees (built; live test open; owner decision 2026-11-18)
 
 The best experience is with a webcam and a microphone.
