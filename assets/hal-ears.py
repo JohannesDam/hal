@@ -15,7 +15,8 @@ stdout, one JSON object per line:
   {"t": "speech", "src": "mic"|"loop", "on": true|false}
   {"t": "heard", "src", "text", "lang", "sec"}
   {"t": "heard", "src": "mic", "name": true, "text": <the rest, or "">, "sec"}  addressed to HAL
-  {"t": "heard", "src": "mic", "stop": true, "text": ""}   "stop", alone: the conversation ends
+  {"t": "heard", "src": "mic", "wake": true, "text": ""}   "HAL, please wake up": a conversation opens
+  {"t": "heard", "src": "mic", "stop": true, "text": ""}   "stop" alone or "HAL, go to sleep": it ends
   {"t": "learn", "step": "name"|"stop"|"other", "got": n, "peak": 0..1 (name only)}
   {"t": "learned", "ok", "caught", "of", "spellings", ...} or {"t": "learned", "forgotten": true}
   {"t": "error", "why"}
@@ -301,6 +302,9 @@ class Ears:
             if kind == "mic" and self.learning is not None:
                 self.learn_segment(segment, "" if noise else text)
                 continue
+            if kind == "mic" and not noise and self.name.is_wake(text):
+                emit({"t": "heard", "src": kind, "wake": True, "text": "", "lang": lang, "sec": sec})
+                continue
             if kind == "mic" and self.name.is_stop(text, segment, noise):
                 emit({"t": "heard", "src": kind, "stop": True, "text": "", "lang": lang, "sec": sec})
                 continue
@@ -324,14 +328,14 @@ class Ears:
             return
         sec = len(segment) / RATE
         if learning["step"] == "name":
-            if sec > 2.5:  # a sentence, not a name: ignored
+            if sec > 4.0:  # "HAL, please wake up" takes two seconds; longer is something else
                 return
             learning["names"].append((segment, text))
             # The peak lets the mod set the microphone's level: above 0.9 the voice clips.
             peak = round(float(np.abs(segment).max()), 3)
             emit({"t": "learn", "step": "name", "got": len(learning["names"]), "peak": peak})
         elif learning["step"] == "stop":
-            if sec > 2.5:
+            if sec > 4.0:
                 return
             learning["stops"].append((segment, text))
             emit({"t": "learn", "step": "stop", "got": len(learning["stops"])})

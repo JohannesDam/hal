@@ -45,6 +45,28 @@ def _distance(a: str, b: str) -> int:
     return row[-1]
 
 
+# The sentences that open and close a conversation, however the name comes out
+# ("Hell, please wake up."). Short utterances only.
+WAKE_RE = re.compile(r"\bwake\s*up\b|\bwakker\b", re.I)
+SLEEP_RE = re.compile(r"\bgo to sleep\b|\bsleep now\b|\bga slapen\b", re.I)
+MAX_PHRASE_WORDS = 7
+
+
+def norm(text: str) -> str:
+    """Lower-case words only, Whisper's own markers removed."""
+    return " ".join(re.findall(r"[^\W\d_]+", re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", text.lower())))
+
+
+def like_learned(text: str, learned: list[str]) -> bool:
+    """Close to one of the guest's own learned sentences (as Whisper wrote them)."""
+    from difflib import SequenceMatcher
+
+    n = norm(text)
+    if not n or len(n.split()) > MAX_PHRASE_WORDS:
+        return False
+    return any(SequenceMatcher(None, n, sentence).ratio() >= 0.75 for sentence in learned)
+
+
 # The word that ends a conversation, said alone: "stop" as Whisper may write it.
 STOP_SHAPES = ["stop", "stopp", "stoppen", "stap", "stob"]
 
@@ -159,8 +181,19 @@ class Name:
         # Words Whisper wrote for this guest's "HAL" at least three times in five, whatever they
         # are: they count only when said alone (is_alone_call).
         self.alone: set[str] = set()
+        # How Whisper wrote this guest's "HAL, please wake up" and "HAL, go to sleep".
+        self.wake_texts: list[str] = []
+        self.sleep_texts: list[str] = []
         self.learned = {}
         self.load()
+
+    def is_wake(self, text: str) -> bool:
+        n = norm(text)
+        return 0 < len(n.split()) <= MAX_PHRASE_WORDS and (bool(WAKE_RE.search(n)) or like_learned(n, self.wake_texts))
+
+    def is_sleep(self, text: str) -> bool:
+        n = norm(text)
+        return 0 < len(n.split()) <= MAX_PHRASE_WORDS and (bool(SLEEP_RE.search(n)) or like_learned(n, self.sleep_texts))
 
     @property
     def is_learned(self) -> bool:
@@ -175,6 +208,8 @@ class Name:
             self.threshold = float(meta["threshold"])
             self.stop_threshold = float(meta.get("stop_threshold", 0.0))
             self.alone = {w for w in meta.get("alone", []) if isinstance(w, str) and w and not is_stop_word(w)}
+            self.wake_texts = [t for t in meta.get("wake_texts", []) if isinstance(t, str) and t]
+            self.sleep_texts = [t for t in meta.get("sleep_texts", []) if isinstance(t, str) and t]
             # Files from version 1 could hold any word ("oh", "go"): only name-shaped ones count.
             self.spellings = set(DEFAULT_SPELLINGS) | {w for w in meta.get("spellings", []) if is_name_shaped(w)}
             if meta.get("version", 1) < 2 and (meta.get("margin") or 0) <= 0:
@@ -184,6 +219,7 @@ class Name:
         except (OSError, ValueError, KeyError):
             self.prints, self.threshold, self.learned = [], 0.0, {}
             self.stop_prints, self.stop_threshold, self.alone = [], 0.0, set()
+            self.wake_texts, self.sleep_texts = [], []
             self.spellings = set(DEFAULT_SPELLINGS)
 
     def forget(self) -> None:
@@ -212,8 +248,8 @@ class Name:
         return min(dtw(f, p) for p in self.prints) <= self.threshold
 
     def is_stop(self, text: str, samples: np.ndarray, is_noise: bool) -> bool:
-        """'stop', alone: the word that ends a conversation. Whisper first; the prints for noise."""
-        if not is_noise and is_stop_word(text):
+        """'stop' alone, or 'HAL, go to sleep': the conversation ends. Whisper first; the prints for noise."""
+        if not is_noise and (is_stop_word(text) or self.is_sleep(text)):
             return True
         if not self.stop_prints or self.stop_threshold <= 0 or (not is_noise and len(re.findall(r"[^\W\d_]+", text)) > 1):
             return False
@@ -328,6 +364,23 @@ class Name:
         meta["stop_threshold"] = round(float(stop_threshold), 4)
         meta["stop_caught"] = sum(1 for i in range(len(stops)) if by_stop_word[i] or (i < len(by_stop_sound) and by_stop_sound[i]))
         meta["stop_of"] = len(stops)
+        # The sentences (0.4.1): "HAL, please wake up" and "HAL, go to sleep", as Whisper wrote
+        # this guest's. A recording counts when the phrase is in it, or it resembles another one.
+        wake = [n for _, t in names if (n := norm(t)) and len(n.split()) <= MAX_PHRASE_WORDS]
+        sleep = [n for _, t in stops if (n := norm(t)) and len(n.split()) <= MAX_PHRASE_WORDS]
+
+        def counted(texts: list[str], pattern: re.Pattern) -> int:
+            return sum(1 for i, t in enumerate(texts) if pattern.search(t) or like_learned(t, texts[:i] + texts[i + 1 :]))
+
+        if wake or sleep:
+            meta["wake_texts"], meta["sleep_texts"] = wake, sleep
+            meta["caught"] = max(meta["caught"], counted(wake, WAKE_RE))
+            meta["stop_caught"] = max(meta["stop_caught"], counted(sleep, SLEEP_RE))
+            meta["ok"] = meta["caught"] >= 2
+            if meta["ok"]:
+                meta.pop("why", None)
+            else:
+                meta["why"] = "speech recognition wrote your sentence differently every time"
         self.folder.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
             self.folder / "prints.npz",

@@ -1,8 +1,8 @@
-// /hal learn: HAL learns how this guest says his name and "stop", step by step, like a wizard.
+// /hal learn: HAL learns how this guest says "HAL, please wake up" and "HAL, go to sleep",
 // The ears (assets/hal_name.py) do the listening and keep what they learn on this machine;
 // this file holds the steps, what HAL says at each one, and what the chat shows.
 
-export const NAME_TIMES = 5
+export const NAME_TIMES = 3
 export const STOP_TIMES = 3
 export const OTHER_TIMES = 2
 /** After the result: how long the band keeps showing how to call him. */
@@ -32,17 +32,17 @@ const Word = (n: number) => {
 }
 
 /** What the chat shows when /hal learn starts. */
-export const LEARN_INTRO = `◉ HAL learns your voice: the word that opens a conversation with him, and the word that ends it.
+export const LEARN_INTRO = `◉ HAL learns your voice: the sentence that opens a conversation with him, and the one that ends it.
 Stay near the microphone; follow his voice.
 
-  1. He says "Say my name."  Say "HAL", only his name, then be still. ${Word(NAME_TIMES)} times.
-  2. He asks for the word that sends him away. Say "stop", only that word. ${Word(STOP_TIMES)} times.
+  1. He asks to be woken. Say "HAL, please wake up", then be still. ${Word(NAME_TIMES)} times.
+  2. He asks to be sent away. Say "HAL, go to sleep", then be still. ${Word(STOP_TIMES)} times.
   3. He asks for something of your own. Say ${word(OTHER_TIMES)} ordinary sentences, in any language you use here.
   4. He weighs what he heard and tells you how well he knows your voice.
-  5. Then open a conversation for real: say "HAL", and "stop" when you are done.
+  5. Then open a conversation for real: "HAL, please wake up", and "HAL, go to sleep" when you are done.
 
-Wait for the bar in the band, then say the word once. If your voice clips (too loud) or drowns (too quiet), he sets the microphone's input level himself and says so; Windows Settings > Sound changes it back.
-What he learns stays on this machine (%LOCALAPPDATA%\\hal\\name): how speech recognition writes your words, and a small acoustic print of each time you said them, never the recording. /hal forget erases it. /hal learn stop ends this.`
+Wait for the bar in the band, then say the sentence once. If your voice clips (too loud) or drowns (too quiet), he sets the microphone's input level himself and says so; Windows Settings > Sound changes it back.
+What he learns stays on this machine (%LOCALAPPDATA%\\hal\\name): how speech recognition writes your sentences, never the recording. /hal forget erases it. /hal learn stop ends this.`
 
 /** How to talk with him: shown after learning, and in /hal help. */
 export const HOW_TO_CALL = `Talking with HAL:
@@ -53,26 +53,26 @@ export const HOW_TO_CALL = `Talking with HAL:
   "HAL, go to sleep"      ends it; so does "stop", said or typed alone. Two minutes of silence too.
   "HAL, what time is it"  one question in one breath, without a conversation.
   Whole sentences work best: speech recognition hears a sentence far better than one word.
-  /hal learn can teach him your lone "HAL" and "stop" as well. Only the microphone can call him.`
+  /hal learn teaches him how you say both sentences. Only the microphone can call him.`
 
 export function bandFor(learn: Learn): string {
   switch (learn.step) {
     case 'name':
-      return `HAL learns · say "HAL", then be still · ${learn.got} of ${NAME_TIMES}`
+      return `HAL learns · say "HAL, please wake up" · ${learn.got} of ${NAME_TIMES}`
     case 'stop':
-      return `HAL learns · say "stop", then be still · ${learn.got} of ${STOP_TIMES}`
+      return `HAL learns · say "HAL, go to sleep" · ${learn.got} of ${STOP_TIMES}`
     case 'other':
       return `HAL learns · say a sentence of your own · ${learn.got} of ${OTHER_TIMES}`
     case 'weighing':
       return 'HAL learns · he weighs what he heard'
     case 'practice':
-      return 'Say "HAL" to open a conversation · "stop" to end it'
+      return '"HAL, please wake up" opens a conversation · "HAL, go to sleep" ends it'
   }
 }
 
 // No line opens on a weak vowel: the voice swallows it ("Again." came out as "gain").
 /** How long he listens after each of his lines: one word, or one sentence. */
-export const windowMs = (step: LearnStep) => (step === 'other' ? 8000 : 4000)
+export const windowMs = (step: LearnStep) => (step === 'other' ? 8000 : 5000)
 
 /**
  * The listening window in the band: the bar empties while he listens, and the word is said
@@ -82,7 +82,7 @@ export function windowBand(learn: Learn, left: number): string {
   const width = 16
   const full = Math.max(0, Math.min(width, Math.round(left * width)))
   const bar = `▕${'█'.repeat(full)}${'░'.repeat(width - full)}▏`
-  const what = learn.step === 'name' ? 'say "HAL" now' : learn.step === 'stop' ? 'say "stop" now' : 'say a sentence now'
+  const what = learn.step === 'name' ? 'say "HAL, please wake up" now' : learn.step === 'stop' ? 'say "HAL, go to sleep" now' : 'say a sentence now'
   const of = learn.step === 'name' ? NAME_TIMES : learn.step === 'stop' ? STOP_TIMES : OTHER_TIMES
 
   return `HAL listens · ${what} ${bar} ${learn.got} of ${of}`
@@ -119,9 +119,9 @@ const AGAIN =['Once more.', 'The same way. Once more.', 'Say it again.', 'One mo
 
 /** What HAL says at each step. Plain lines: no haze, not kept among his remarks. */
 export const lineFor = {
-  start: 'Say my name. Only my name.',
+  start: 'Wake me. Say: HAL, please wake up.',
   again: (got: number) => AGAIN[(got - 1) % AGAIN.length] ?? 'Once more.',
-  toStop: 'Now the word that sends me away. Say stop.',
+  toStop: 'Now send me away. Say: HAL, go to sleep.',
   stopAgain: 'Once more.',
   toOther: 'That is enough. Now say something else. Anything of your own.',
   otherAgain: 'One more.',
@@ -132,10 +132,10 @@ export const lineFor = {
     const caught = r.caught ?? 0
     const of = r.of ?? NAME_TIMES
     if (r.ok) {
-      return `${Word(caught)} of ${word(of)}. I know how you say my name now. Say it, and I will come.`
+      return `${Word(caught)} of ${word(of)}. I know how you wake me now. Do it, and I will come.`
     }
 
-    return `${Word(caught)} of ${word(of)}. Come closer when you call me, and say it the same way.`
+    return `${Word(caught)} of ${word(of)}. Come closer when you wake me, and say it the same way.`
   },
 }
 
@@ -144,9 +144,9 @@ export function learnedNote(r: Learned): string {
   if (r.caught === undefined || r.of === undefined) {
     return `The guest ran /hal learn; HAL did not hear enough to learn their voice (${r.why ?? 'too little speech'}).`
   }
-  const stop = r.stop_of ? ` "stop": ${r.stop_caught ?? 0} of ${r.stop_of}.` : ''
+  const stop = r.stop_of ? ` "HAL, go to sleep": ${r.stop_caught ?? 0} of ${r.stop_of}.` : ''
 
-  return `The guest just taught HAL how they say his name (/hal learn): ${r.caught} of ${r.of} recordings recognised${r.ok ? '' : `, too weak to use (${r.why ?? 'unclear recordings'}); suggest a quieter moment, closer to the microphone, and /hal learn again`}.${stop} Tell them in two plain sentences how it works now: "HAL" opens a conversation (the eye stays, everything they say goes to HAL, "look" makes him look through the webcam), "stop" said or typed alone ends it.`
+  return `The guest just taught HAL how they wake him (/hal learn): ${r.caught} of ${r.of} "HAL, please wake up" recognised${r.ok ? '' : `, too weak to use (${r.why ?? 'unclear recordings'}); suggest a quieter moment, closer to the microphone, and /hal learn again`}.${stop} Tell them in two plain sentences how it works now: "HAL, please wake up" opens a conversation (the eye stays, everything they say goes to HAL, "look" makes him look through the webcam), "HAL, go to sleep" or "stop" typed alone ends it.`
 }
 
 /** The next step after the ears counted another recording, and whether the ears must move on. */

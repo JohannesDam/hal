@@ -107,17 +107,17 @@ test('/hal learn: he leads the way by voice, the ears count, and he answers his 
 
   expect(sent.filter(m => m.kind === 'learn').map(m => m.step)).toEqual(['name', 'stop', 'other', 'finish'])
   const lines = said(sent)
-  expect(lines).toContain('Say my name. Only my name.')
-  expect(lines).toContain('Now the word that sends me away. Say stop.')
+  expect(lines).toContain('Wake me. Say: HAL, please wake up.')
+  expect(lines).toContain('Now send me away. Say: HAL, go to sleep.')
   expect(lines).toContain('That is enough. Now say something else. Anything of your own.')
-  expect(lines).toContain('Five of five. I know how you say my name now. Say it, and I will come.')
+  expect(lines).toContain('Five of five. I know how you wake me now. Do it, and I will come.')
   // His name alone, after learning: a conversation opens, the eye comes with his first words.
   const open = sent.find(m => m.kind === 'presence' && m.on === true)
   expect(typeof open?.text === 'string' && String(open?.text).length > 0).toBe(true)
   // The model hears what happened with the next prompt, never the words; the conversation is open.
   const next = await $.prompt.submit({ text: 'and now?' })
   const context = (next.context ?? []).join('\n')
-  expect(context).toContain('5 of 5 recordings recognised')
+  expect(context).toContain('5 of 5 "HAL, please wake up" recognised')
   expect(context).toContain('A conversation with HAL is open')
   // "stop" typed alone: nothing reaches the model, he says goodbye, the eye goes.
   const stopped = await $.prompt.submit({ text: 'stop' })

@@ -393,7 +393,15 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
         if (conversation && typeof message.alone === 'string' && message.alone) {
           await onHeard($, message.src, message.alone, typeof message.sec === 'number' ? message.sec : 0)
         } else {
-          await onHeard($, message.src, message.text, typeof message.sec === 'number' ? message.sec : 0, message.name === true, message.stop === true)
+          await onHeard(
+            $,
+            message.src,
+            message.text,
+            typeof message.sec === 'number' ? message.sec : 0,
+            message.name === true,
+            message.stop === true,
+            message.wake === true,
+          )
         }
       }
       break
@@ -884,7 +892,7 @@ function stopWatch() {
   watchTimer = undefined
 }
 
-async function onHeard($: $, src: Source, text: string, sec: number, isName = false, isStop = false) {
+async function onHeard($: $, src: Source, text: string, sec: number, isName = false, isStop = false, isWake = false) {
   const settings = await read($, settingsAtom)
   if (!settings.isOn || !settings.listen) {
     return
@@ -904,8 +912,12 @@ async function onHeard($: $, src: Source, text: string, sec: number, isName = fa
     // name, the text is the rest of the sentence. Without the ears' word, the regex decides.
     const command = isName ? text : addressed(text)
     // The sentences decide first: "HAL, please wake up" opens, "HAL, go to sleep" ends.
-    if (!conversation && isWakePhrase(text)) {
-      void openConversation($, settings).catch(() => undefined)
+    if (isWake || isWakePhrase(text)) {
+      if (conversation) {
+        lookAtYou(2500)
+      } else {
+        void openConversation($, settings).catch(() => undefined)
+      }
 
       return
     }

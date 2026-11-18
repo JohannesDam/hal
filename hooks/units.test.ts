@@ -93,10 +93,10 @@ test('/hal learn walks through five names, three stops, two sentences, the weigh
   }
   expect(learn.step).toBe('weighing')
   expect(sent).toEqual(['stop', 'other', 'finish'])
-  expect(bandFor({ step: 'name', got: 2, at: T0 })).toBe('HAL learns · say "HAL", then be still · 2 of 5')
+  expect(bandFor({ step: 'name', got: 2, at: T0 })).toBe('HAL learns · say "HAL, please wake up" · 2 of 3')
   // The listening window: the bar empties while he listens.
-  expect(windowBand({ step: 'name', got: 2, at: T0 }, 1)).toBe('HAL listens · say "HAL" now ▕████████████████▏ 2 of 5')
-  expect(windowBand({ step: 'stop', got: 0, at: T0 }, 0.5)).toBe('HAL listens · say "stop" now ▕████████░░░░░░░░▏ 0 of 3')
+  expect(windowBand({ step: 'name', got: 2, at: T0 }, 1)).toBe('HAL listens · say "HAL, please wake up" now ▕████████████████▏ 2 of 3')
+  expect(windowBand({ step: 'stop', got: 0, at: T0 }, 0.5)).toBe('HAL listens · say "HAL, go to sleep" now ▕████████░░░░░░░░▏ 0 of 3')
   expect(windowBand({ step: 'other', got: 1, at: T0 }, 0)).toBe('HAL listens · say a sentence now ▕░░░░░░░░░░░░░░░░▏ 1 of 2')
   expect(windowMs('other') > windowMs('name')).toBe(true)
   // The level: a clipping voice is turned down, a drowning one up, at most three times.
@@ -112,7 +112,7 @@ test('/hal learn walks through five names, three stops, two sentences, the weigh
     expect(/!|\d/.test(line)).toBe(false)
     expect(line.split(/\s+/).length <= 18).toBe(true)
   }
-  expect(lineFor.result({ ok: true, caught: 5, of: 5 })).toBe('Five of five. I know how you say my name now. Say it, and I will come.')
+  expect(lineFor.result({ ok: true, caught: 5, of: 5 })).toBe('Five of five. I know how you wake me now. Do it, and I will come.')
   expect(learnedNote({ ok: true, caught: 4, of: 5 }).includes('4 of 5')).toBe(true)
 })
 
