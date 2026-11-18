@@ -777,7 +777,7 @@ function Start-Next {
   $S.t0 = $S.clock.Elapsed.TotalSeconds
   # In a conversation the eye is already there: no new entrance, he only looks a moment longer.
   if ($wasHolding) { $S.t0 -= 1.4 }
-  $S.voice = $null; $S.voiceReadyT = $null; $S.speakAt = $null; $S.interruptedAt = $null
+  $S.voice = $null; $S.voiceReadyT = $null; $S.speakAt = $null; $S.interruptedAt = $null; $S.earsOpenAt = $null
   $S.exitEvent = 'done'; $S.exitWhy = ''
   $S.synthStartMs = NowMs
   $S.job = $null; $S.wav = $null; $S.lead = 0.0; $S.isPlayed = $false
@@ -1012,14 +1012,19 @@ $script:anim.Add_Tick({
           }
           if ($u -ge $seconds) {
             Emit @{ t = 'level'; v = 0 }
-            # His voice is done: the ears open now (with their own 300 ms tail), not after the
-            # stare. A guest answers right away; two seconds of deaf staring lost their words.
-            Send-Ears '{"gate": false}'
-            Emit @{ t = 'spoken'; id = $item.id }
+            # His voice is done. The ears open 0.6 s later, still inside the stare: the sound card
+            # plays behind the clock and the room echoes, and 0.3.2 opened them at once, so his
+            # own last word came back through the speakers as the guest's answer.
+            $S.earsOpenAt = $t + 0.6
             $S.phase = 'stare'; $S.stareStart = $t; $S.stareLength = 2.0
           }
         }
         'stare' {
+          if ($null -ne $S.earsOpenAt -and $t -ge $S.earsOpenAt) {
+            $S.earsOpenAt = $null
+            Send-Ears '{"gate": false}'
+            Emit @{ t = 'spoken'; id = $item.id }
+          }
           if ($t - $S.stareStart -ge $S.stareLength) {
             $why = ''; if ($null -ne $S.interruptedAt) { $why = 'interrupted' }
             if ($S.presence) { Enter-Hold $why; break }

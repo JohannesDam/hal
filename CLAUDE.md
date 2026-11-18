@@ -51,7 +51,7 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 - Settings live in `$.store`, shared by every session on the machine; the atom is per session. The store is the truth: `followStore` brings a session in line, and `/hal off` always sends `quit`.
 - Whisper writes a lone "HAL" as "Hell." more often than "Hal."; a lone name is its own VAD segment, so the command that follows never starts with his name (hence the attend window after his answer).
 - The sherpa-onnx keyword spotter (GigaSpeech 3.3M) misses a lone "HAL" at every threshold and fires on "the hall": not usable for his name.
-- The ears open when his voice ends, not after the stare: a guest answers at once, and two deaf seconds lost their words.
+- The ears open 0.6 s after his voice ends, inside the stare: at once (0.3.2) they heard his own last word back through the laptop speakers (sound-card latency, echo); after the whole stare (before 0.3.2) a guest's quick answer was lost.
 - Piper swallows a weak opening vowel ("Again." sounds like "gain"): his short lines start on a strong syllable.
 - Silero VAD with `min_speech_duration` 0.3 s drops a quiet "stop" (little voice in it); the microphone uses 0.15 s.
 - Raw MFCC + DTW does not survive noise: drop c0, add the room's floor to each band before the log, and normalise mean and variance per recording.
