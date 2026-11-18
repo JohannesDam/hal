@@ -27,8 +27,8 @@ The character is inspired by the archetype of the calm, polite, unsettling ship'
 | `/hal listen` | HAL listens along: the microphone and what the computer plays (also during a call, until it ends) |
 | `/hal deaf` | HAL stops listening: both inputs close, and what he heard is forgotten |
 | `/hal mic <name>\|auto` | which microphone he listens to (auto: a built-in one first) |
-| `/hal learn` | HAL learns how you say his name: a short spoken walk-through (`/hal learn stop` ends it) |
-| `/hal forget` | HAL forgets how you say his name |
+| `/hal learn` | HAL learns how you say his name and "stop": a short spoken walk-through (`/hal learn stop` ends it) |
+| `/hal forget` | HAL forgets how you say his name and "stop" |
 | `/hal see on\|off` | HAL looks through the webcam now and then, measured on this machine (off by default) |
 | `/hal check` | which voice, ears and screens HAL uses, how fast he answers, what the haze costs, whether he knows your voice, and his last look |
 | `/hal help` | the commands, and how to call HAL by voice |
@@ -111,14 +111,16 @@ and in the profile you start Claude Code from: `"colorScheme": "HAL"`.
 While HAL is awake he listens to a microphone and to what the computer plays (the loopback of the default output). Speech is cut out with Silero VAD and written down by multilingual Whisper (Dutch and English), **on this machine**; the words stay in memory for five minutes and are never written to disk. While HAL speaks, his ears are closed.
 
 - **Spoken to:** a sentence from the microphone that starts with his name ("HAL, run the tests") becomes a prompt. It stands in the prompt box for 1.5 s with "You said: …" above it; change or clear it to stop it. Speech from the computer's audio never becomes a command.
-- **His name alone:** say "HAL" and wait. He answers in a word or two, the eye holds you, and what you say in the next ten seconds becomes the prompt, the same way.
-- **`/hal learn`:** a spoken walk-through, once per person and machine. He asks for his name five times, then for two ordinary sentences of yours, tells you how many of the five he caught, and lets you call him for real. He learns how speech recognition writes your "HAL" and keeps a small acoustic print of each time you said it (never the recording), only on this machine in `%LOCALAPPDATA%\hal\name`. `/hal forget` erases it.
+- **A conversation:** say "HAL" alone and he comes: the haze and the eye come over the screen with his first words, and they **stay**. From then on everything you say through the microphone goes to him, without his name: a task, a question, small talk. Each sentence stands in your prompt for one second first ("You said: …"); type or clear it to keep it from being sent. "look" makes him take one look through the webcam before he answers (with `/hal see on`). He answers every time aloud, after a silence of two or three seconds; while you say nothing the aperture narrows and the haze slowly darkens. **"stop"**, said alone or typed alone, ends it: he says a last word and the eye withdraws. After two minutes of silence he ends it himself; a call or `/hal off` ends it at once.
+- **`/hal learn`:** a spoken walk-through, once per person and machine. He asks for his name five times, then for "stop" three times, then for two ordinary sentences of yours, tells you how many he caught, and lets you open a conversation for real. He learns how speech recognition writes your words (only spellings that resemble "HAL" and "stop") and keeps a small acoustic print of each time you said them (never the recording), only on this machine in `%LOCALAPPDATA%\hal\name`. `/hal forget` erases it.
 
-**How to call HAL**
+**Talking with HAL**
 
 ```
-"HAL" ... wait for his answer ... "what time is it"      the sure way
-"HAL, what time is it"                                    in one breath
+"HAL"                      opens a conversation; the eye stays
+"what time is it", "look"  anything you say goes to him, until
+"stop"                     ends it (said alone, or typed alone)
+"HAL, what time is it"     one question in one breath, without a conversation
 ```
 
 **The best experience is with a microphone and a webcam**, in a quiet room, near the microphone. `/hal check` tells you whether he knows your voice.
@@ -144,7 +146,7 @@ Off until you switch it on. Then HAL takes one look through the webcam when he w
 - `assets/hal-voice.py` with `assets/hal_piper.py` and `assets/hal_kokoro.py`: the neural voice, kept warm; one request per line on stdin, one wav per answer.
 - `assets/hal-ears.py`: the ears, started by HAL's process while he listens: the microphone and the loopback (soundcard, WASAPI), a VAD per input, Whisper small for both; it reports speech starting and stopping and what was said, is gated while HAL speaks, and goes deaf while another app holds the microphone. `hooks/ears.ts`: what the mod does with it (spoken commands, his name alone, overheard remarks, the tally per day).
 - `assets/hal-sight.py`: one look through the webcam, reduced to numbers (faces, distance, side, light, warmth, backlight); the frame never leaves the process. `hooks/sight.ts`: those numbers as facts, and what changed between two looks.
-- `assets/hal_name.py`: his name as this guest says it: the spellings and acoustic prints from `/hal learn`, and the match (DTW) for short segments Whisper could not read. `hooks/learn.ts`: the walk-through's steps, lines and texts.
+- `assets/hal_name.py`: his name as this guest says it: the spellings and acoustic prints from `/hal learn`, and the match (DTW) for short segments Whisper could not read. `hooks/learn.ts`: the walk-through's steps, lines and texts. `hooks/conversation.ts`: a conversation from "HAL" to "stop" (the typed stop, "look", how the haze settles in, his closing words); the host keeps the haze and the eye on screen between his lines ("hold").
 - `tools/setup-voice.ps1`: downloads the voice, the speech models and the face model (each checked by SHA-256) and builds the Python environment.
 - `tools/render-pictures.ps1` with `tools/render-terminal.mjs`: renders the pictures in `docs/images` from the mod's own drawing code, offscreen (Node 22.6 or newer, Microsoft Edge). Run it again when the eye or the haze changes.
 - `assets/hal.ps1`: one line from a shell, for testing: `powershell -NoProfile -STA -ExecutionPolicy Bypass -File hal.ps1 -Text "Nothing was deleted. I checked."`. When HAL's process runs, the line goes to it.

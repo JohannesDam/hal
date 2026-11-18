@@ -9,13 +9,14 @@ writes it down. Nothing is written to disk; the words exist only in the lines be
 stdin, one JSON object per line, from the host:
   {"gate": true|false}   HAL speaks / is done (300 ms tail after false)
   {"override": true}     keep listening while another app holds the microphone, for that call
-  {"learn": "name"|"other"|"finish"|"cancel"|"forget"}   /hal learn (hal_name.py)
+  {"learn": "name"|"stop"|"other"|"finish"|"cancel"|"forget"}   /hal learn (hal_name.py)
 stdout, one JSON object per line:
   {"t": "ears", "state": "listening"|"deaf", "why", "app", "mic", "loop", "learned"}
   {"t": "speech", "src": "mic"|"loop", "on": true|false}
   {"t": "heard", "src", "text", "lang", "sec"}
   {"t": "heard", "src": "mic", "name": true, "text": <the rest, or "">, "sec"}  addressed to HAL
-  {"t": "learn", "step": "name"|"other", "got": n}
+  {"t": "heard", "src": "mic", "stop": true, "text": ""}   "stop", alone: the conversation ends
+  {"t": "learn", "step": "name"|"stop"|"other", "got": n}
   {"t": "learned", "ok", "caught", "of", "spellings", ...} or {"t": "learned", "forgotten": true}
   {"t": "error", "why"}
 """
@@ -298,6 +299,9 @@ class Ears:
             if kind == "mic" and self.learning is not None:
                 self.learn_segment(segment, "" if noise else text)
                 continue
+            if kind == "mic" and self.name.is_stop(text, segment, noise):
+                emit({"t": "heard", "src": kind, "stop": True, "text": "", "lang": lang, "sec": sec})
+                continue
             if kind == "mic":
                 named, rest = self.name.hear(text, segment, noise)
                 if named:
@@ -318,6 +322,11 @@ class Ears:
                 return
             learning["names"].append((segment, text))
             emit({"t": "learn", "step": "name", "got": len(learning["names"])})
+        elif learning["step"] == "stop":
+            if sec > 2.5:
+                return
+            learning["stops"].append((segment, text))
+            emit({"t": "learn", "step": "stop", "got": len(learning["stops"])})
         elif learning["step"] == "other":
             if sec < 1.0:
                 return
@@ -326,13 +335,13 @@ class Ears:
 
     def on_learn(self, step: str) -> None:
         if step == "name":
-            self.learning = {"step": "name", "names": [], "others": []}
-        elif step == "other" and self.learning is not None:
-            self.learning["step"] = "other"
+            self.learning = {"step": "name", "names": [], "stops": [], "others": []}
+        elif step in ("stop", "other") and self.learning is not None:
+            self.learning["step"] = step
         elif step == "finish" and self.learning is not None:
             learning, self.learning = self.learning, None
             try:
-                result = self.name.learn(learning["names"], learning["others"])
+                result = self.name.learn(learning["names"], learning["others"], learning["stops"])
             except Exception as error:  # never leave the wizard hanging
                 result = {"ok": False, "why": str(error)}
             emit({"t": "learned", **result})

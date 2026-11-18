@@ -757,6 +757,8 @@ $script:S = @{
   gaze = @{ x = 0.0; y = 0.0; nx = 0.0; ny = 0.0; dartUntil = 0.0; nextDart = 0.0; dx = 0.0; dy = 0.0 }
   started = (NowMs); lastLatencyMs = $null; lastSynthMs = $null; lastCpuPct = $null
   cpuAt = $null; synthStartMs = 0
+  # A conversation: the haze and the eye stay between his lines ('hold') until the mod ends it.
+  presence = $false; presenceStrength = 0.5
 }
 $rnd = New-Object System.Random
 $clamp = { param($v) [Math]::Max(0.0, [Math]::Min(1.0, [double]$v)) }
@@ -766,11 +768,15 @@ function Start-Next {
   $S = $script:S
   $item = $S.queue[0]; $S.queue.RemoveAt(0)
   if ((NowMs) - [int64]$item.at -gt (Get-LateMs)) { Emit @{ t = 'dropped'; id = $item.id; why = 'late' }; Start-Next; return }
+  $wasHolding = $S.phase -eq 'hold'
   $S.item = $item
   $S.isEyeOnly = [bool]$item.eyeOnly
-  $S.isHaze = [bool]$item.haze -or $S.isEyeOnly
+  # A line that starts from the hold stays in the haze, also his last one after "stop".
+  $S.isHaze = [bool]$item.haze -or $S.isEyeOnly -or $S.presence -or $wasHolding
   $S.pause = 0.0; if ($item.pauseMs) { $S.pause = [double]$item.pauseMs / 1000 }
   $S.t0 = $S.clock.Elapsed.TotalSeconds
+  # In a conversation the eye is already there: no new entrance, he only looks a moment longer.
+  if ($wasHolding) { $S.t0 -= 1.4 }
   $S.voice = $null; $S.voiceReadyT = $null; $S.speakAt = $null; $S.interruptedAt = $null
   $S.exitEvent = 'done'; $S.exitWhy = ''
   $S.synthStartMs = NowMs
@@ -784,11 +790,14 @@ function Start-Next {
   if (-not $S.isEyeOnly -and $item.text) { $S.job = Start-Voice ([string]$item.text) ([string]$item.id) }
   $null = [HalNative]::AnyKeyDown()   # forget keys pressed before this line
   $S.cpuAt = @{ cpu = (Get-Process -Id $PID).TotalProcessorTime.TotalMilliseconds; at = $S.clock.Elapsed.TotalMilliseconds }
-  if ($S.isHaze) {
+  if ($S.isHaze -and $wasHolding) {
+    foreach ($p in $S.windows) { if ($p.Line.Visibility -eq 'Visible') { $p.Line.Text = [string]$S.phrases[0]; $p.Line.Opacity = 0 } }
+  } elseif ($S.isHaze) {
     $active = [HalNative]::ActiveMonitor()
     $windows = @(Get-Windows)
+    $strength = [double]$item.strength; if ($S.presence) { $strength = $S.presenceStrength }
     foreach ($p in $windows) {
-      Set-Strength $p ([double]$item.strength)
+      Set-Strength $p $strength
       Set-Haze $p 0 0
       $p.Line.Text = [string]$S.phrases[0]
       $p.Line.Opacity = 0; $p.Spark.Opacity = 0; $p.EyeGroup.Opacity = 0
@@ -811,6 +820,19 @@ function Start-Exit([double]$t, [double]$length, [string]$event, [string]$why) {
   $S.phase = 'exit'; $S.exitStart = $t; $S.exitLength = $length
   $S.exitEvent = $event; $S.exitWhy = $why
   if ($S.player -and $event -eq 'dropped') { try { $S.player.Stop() } catch { } }
+}
+
+# A line is done inside a conversation: the eye stays and holds the guest; his ears open again.
+function Enter-Hold([string]$why) {
+  $S = $script:S
+  $msg = @{ t = 'done'; id = $S.item.id }
+  if ($why) { $msg.why = $why }
+  Emit $msg
+  Send-Ears '{"gate": false}'
+  foreach ($p in $S.windows) { $p.Line.Text = ''; $p.Line.Opacity = 0 }
+  $S.item = $null; $S.player = $null; $S.isEyeOnly = $false; $S.isHaze = $true
+  $S.phase = 'hold'; $S.holdStart = $S.clock.Elapsed.TotalSeconds - $S.t0
+  if ($S.queue.Count -gt 0) { Start-Next }
 }
 
 function Stop-Line {
@@ -852,6 +874,12 @@ function Get-Visual([double]$t, [double]$fast) {
     'stare' {
       $v.open = 0.35; $v.mode = 'atYou'
       if (-not $S.isEyeOnly) { $v.line = 0.85 }
+    }
+    'hold' {
+      # Waiting for the guest: it looks straight at them, the aperture narrows slowly the
+      # longer they say nothing (at most a third narrower after a minute), no subtitle.
+      $since = $t - [double]$S.holdStart
+      $v.open = 0.35 - 0.12 * (& $clamp ($since / 60.0)); $v.mode = 'atYou'; $v.line = 0.0
     }
     'exit' {
       # PowerShell names ignore case: never call a local $s next to the state $S.
@@ -990,8 +1018,13 @@ $script:anim.Add_Tick({
         'stare' {
           if ($t - $S.stareStart -ge $S.stareLength) {
             $why = ''; if ($null -ne $S.interruptedAt) { $why = 'interrupted' }
+            if ($S.presence) { Enter-Hold $why; break }
             Start-Exit $t 1.8 'done' $why
           }
+        }
+        'hold' {
+          # The conversation ended: the slow way out, as after any line.
+          if (-not $S.presence) { Start-Exit $t 1.8 'released' ''; break }
         }
         'exit' {
           if (-not $S.isHaze -or $t - $S.exitStart -ge $S.exitLength) { Stop-Line; return }
@@ -1250,6 +1283,23 @@ function Read-Inbox {
         if ($script:earsWanted) { $script:earsStarts = @(); Start-Ears; if ($msg.override) { Send-Ears '{"override": true}' } } else { Stop-Ears }
       }
       'learn' { Send-Ears (@{ learn = [string]$msg.step } | ConvertTo-Json -Compress) }
+      'presence' {
+        # A conversation: on, the eye comes (with his first words, if any) and stays; off, it goes
+        # after the line he is saying. A strength alone darkens the haze that is there.
+        if ($msg.strength) {
+          $script:S.presenceStrength = [double]$msg.strength
+          if ($script:S.phase -ne 'idle') { foreach ($p in $script:S.windows) { Set-Strength $p $script:S.presenceStrength } }
+        }
+        if ($msg.on -eq $true -and -not $script:S.presence) {
+          $script:S.presence = $true
+          if ($script:S.phase -eq 'idle') {
+            $first = [pscustomobject]@{ kind = 'say'; id = [string]$msg.id; text = [string]$msg.text; eyeOnly = -not [bool]$msg.text; haze = $true; strength = $script:S.presenceStrength; pauseMs = 300; at = (NowMs) }
+            [void]$script:S.queue.Insert(0, $first)
+          }
+        } elseif ($msg.on -eq $false) {
+          $script:S.presence = $false
+        }
+      }
       'glow' { Set-Glow ([bool]$msg.on) }
       'render' {
         $path = [string]$msg.path
@@ -1272,7 +1322,7 @@ $poll.Add_Tick({
       Read-Ears
       Read-Desk
       if ($script:renders.Count -gt 0) { Read-Renders }
-      if ($script:S.phase -eq 'idle' -and $script:S.queue.Count -gt 0) { Start-Next }
+      if (($script:S.phase -eq 'idle' -or $script:S.phase -eq 'hold') -and $script:S.queue.Count -gt 0) { Start-Next }
     } catch { Emit @{ t = 'error'; why = "$_" } }
   })
 

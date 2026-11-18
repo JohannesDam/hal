@@ -31,19 +31,15 @@ export function addressed(text: string): string | undefined {
   return /[a-z]/i.test(rest) ? rest.charAt(0).toUpperCase() + rest.slice(1) : ''
 }
 
-/**
- * His name alone ("HAL." and a pause): he answers, and the next sentence from the microphone
- * within this window is the command, without his name in front of it.
- */
-export const ATTEND_MS = 10_000
-
+// His name alone ("HAL." and a pause) opens a conversation (conversation.ts): the eye comes and
+// stays, and he says one of these first.
 const ACKNOWLEDGEMENTS: Record<1 | 2 | 3, readonly string[]> = {
   1: ['Yes.', 'I am here.', 'Go on.'],
   2: ['I heard you.', 'Go on. I am listening.', 'Yes. Say it.'],
   3: ['I was already listening.', '...Yes.', 'Go on. Slowly.'],
 }
 
-/** What he says when he hears only his name: short, cold, never the same as the last time. */
+/** What he says when a conversation opens: short, cold, never the same as the last time. */
 export function acknowledgement(level: 1 | 2 | 3, last: string | undefined, pick: number): string {
   const lines = ACKNOWLEDGEMENTS[level].filter(line => line !== last)
 

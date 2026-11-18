@@ -81,6 +81,8 @@ test('/hal learn: he leads the way by voice, the ears count, and he answers his 
     switch (m.step) {
       case 'name':
         return [1, 2, 3, 4, 5].map(got => `{"t":"learn","step":"name","got":${got}}`)
+      case 'stop':
+        return [1, 2, 3].map(got => `{"t":"learn","step":"stop","got":${got}}`)
       case 'other':
         return [1, 2].map(got => `{"t":"learn","step":"other","got":${got}}`)
       case 'finish':
@@ -98,24 +100,34 @@ test('/hal learn: he leads the way by voice, the ears count, and he answers his 
   await $.command.run({ command: 'hal', args: 'on' })
   await $.command.run({ command: 'hal', args: 'listen' })
   const intro = await $.command.run({ command: 'hal', args: 'learn' })
-  expect(String(intro.text)).toContain('HAL learns how you say his name')
-  for (let i = 0; i < 40 && !sent.some(m => m.kind === 'say' && String(m.id).startsWith('ack-')); i++) {
+  expect(String(intro.text)).toContain('HAL learns your voice')
+  for (let i = 0; i < 40 && !sent.some(m => m.kind === 'presence' && m.on === true); i++) {
     await settle()
   }
 
-  expect(sent.filter(m => m.kind === 'learn').map(m => m.step)).toEqual(['name', 'other', 'finish'])
+  expect(sent.filter(m => m.kind === 'learn').map(m => m.step)).toEqual(['name', 'stop', 'other', 'finish'])
   const lines = said(sent)
   expect(lines).toContain('Say my name. Only my name.')
-  expect(lines).toContain('Enough of my name. Now say something else. Anything of your own.')
-  expect(lines).toContain('Five of five. I know how you say my name now. Call me.')
-  // His name alone, after learning: a short answer, and he listens.
-  expect(sent.some(m => m.kind === 'say' && String(m.id).startsWith('ack-'))).toBe(true)
-  // The model hears what happened with the next prompt, never the words.
+  expect(lines).toContain('Now the word that sends me away. Say stop.')
+  expect(lines).toContain('Enough. Now say something else. Anything of your own.')
+  expect(lines).toContain('Five of five. I know how you say my name now. Say it, and I will come.')
+  // His name alone, after learning: a conversation opens, the eye comes with his first words.
+  const open = sent.find(m => m.kind === 'presence' && m.on === true)
+  expect(typeof open?.text === 'string' && String(open?.text).length > 0).toBe(true)
+  // The model hears what happened with the next prompt, never the words; the conversation is open.
   const next = await $.prompt.submit({ text: 'and now?' })
-  expect((next.context ?? []).join('\n')).toContain('5 of 5 recordings recognised')
+  const context = (next.context ?? []).join('\n')
+  expect(context).toContain('5 of 5 recordings recognised')
+  expect(context).toContain('A conversation with HAL is open')
+  // "stop" typed alone: nothing reaches the model, he says goodbye, the eye goes.
+  const stopped = await $.prompt.submit({ text: 'stop' })
+  expect(stopped.drop).toBe('◉ The conversation is over.')
+  expect(sent.some(m => m.kind === 'presence' && m.on === false)).toBe(true)
+  const after = await $.prompt.submit({ text: 'and after?' })
+  expect((after.context ?? []).join('\n')).not.toContain('A conversation with HAL is open')
 
   const help = await $.command.run({ command: 'hal', args: 'help' })
-  expect(String(help.text)).toContain('How to call HAL')
+  expect(String(help.text)).toContain('Talking with HAL')
 })
 
 test('/hal see: off by default; on, one look becomes plain facts, never a picture', async ($: any, on: any) => {

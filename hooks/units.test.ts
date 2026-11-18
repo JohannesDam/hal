@@ -2,7 +2,8 @@ import { expect, test } from 'claude-code/testing'
 
 import { beginVisit, endVisit, factBlock, parseGit, readDossier, receptionKind } from './dossier'
 import { acknowledgement, addressed, keep, remarkFrom, shouldWeigh, tally } from './ears'
-import { advance, bandFor, learnedNote, lineFor, NAME_TIMES, OTHER_TIMES } from './learn'
+import { closing, conversationNote, isLook, isTypedStop, presenceStrength } from './conversation'
+import { advance, bandFor, learnedNote, lineFor, NAME_TIMES, OTHER_TIMES, STOP_TIMES } from './learn'
 import type { Learn } from './learn'
 import { initiative, newWatch, noteTest, testKey } from './moments'
 import { parseSeen, sightFacts } from './sight'
@@ -36,7 +37,27 @@ test('his name alone gets a short answer, never the same one twice in a row', as
   }
 })
 
-test('/hal learn walks through five names, two sentences, the weighing and the practice', async () => {
+test('a conversation: typed stop, look, the haze settling in, the closing lines', async () => {
+  expect(isTypedStop('stop')).toBe(true)
+  expect(isTypedStop(' Stop. ')).toBe(true)
+  expect(isTypedStop('stop the build')).toBe(false)
+  expect(isTypedStop('please stop')).toBe(false)
+  expect(isLook('look')).toBe(true)
+  expect(isLook('Kijk eens naar mij')).toBe(true)
+  expect(isLook('can you look at me now')).toBe(true)
+  expect(isLook('let us look at the parser')).toBe(false)
+  expect(presenceStrength(0)).toBe(0.45)
+  expect(presenceStrength(3 * 60_000)).toBe(0.62)
+  expect(presenceStrength(60 * 60_000)).toBe(0.62)
+  for (const level of [1, 2, 3] as const) {
+    const first = closing(level, undefined, 0)
+    expect(closing(level, first, 0) === first).toBe(false)
+    expect(/!|\d/.test(first)).toBe(false)
+  }
+  expect(conversationNote(true, true, false)).toContain('seeing is off')
+})
+
+test('/hal learn walks through five names, three stops, two sentences, the weighing and the practice', async () => {
   let learn: Learn = { step: 'name', got: 0, at: T0 }
   const said: string[] = []
   const sent: string[] = []
@@ -46,8 +67,16 @@ test('/hal learn walks through five names, two sentences, the weighing and the p
     if (step.say) said.push(step.say)
     if (step.send) sent.push(step.send)
   }
+  expect(learn.step).toBe('stop')
+  expect(sent).toEqual(['stop'])
+  expect(said.at(-1)).toBe(lineFor.toStop)
+  for (let got = 1; got <= STOP_TIMES; got++) {
+    const step = advance(learn, got, T0 + 5 + got)
+    learn = step.next
+    if (step.say) said.push(step.say)
+    if (step.send) sent.push(step.send)
+  }
   expect(learn.step).toBe('other')
-  expect(sent).toEqual(['other'])
   expect(said.at(-1)).toBe(lineFor.toOther)
   for (let got = 1; got <= OTHER_TIMES; got++) {
     const step = advance(learn, got, T0 + 10 + got)
@@ -55,14 +84,14 @@ test('/hal learn walks through five names, two sentences, the weighing and the p
     if (step.send) sent.push(step.send)
   }
   expect(learn.step).toBe('weighing')
-  expect(sent).toEqual(['other', 'finish'])
+  expect(sent).toEqual(['stop', 'other', 'finish'])
   expect(bandFor({ step: 'name', got: 2, at: T0 })).toBe('HAL learns · say "HAL", then be still · 2 of 5')
   // What he says stays inside his own rules: no exclamation marks, short, numbers as words.
   for (const line of [lineFor.start, lineFor.toOther, lineFor.result({ ok: true, caught: 5, of: 5 }), lineFor.result({ ok: false, caught: 2, of: 5 }), lineFor.result({ ok: false, why: 'x' })]) {
     expect(/!|\d/.test(line)).toBe(false)
     expect(line.split(/\s+/).length <= 18).toBe(true)
   }
-  expect(lineFor.result({ ok: true, caught: 5, of: 5 })).toBe('Five of five. I know how you say my name now. Call me.')
+  expect(lineFor.result({ ok: true, caught: 5, of: 5 })).toBe('Five of five. I know how you say my name now. Say it, and I will come.')
   expect(learnedNote({ ok: true, caught: 4, of: 5 }).includes('4 of 5')).toBe(true)
 })
 

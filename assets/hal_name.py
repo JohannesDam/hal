@@ -45,6 +45,15 @@ def _distance(a: str, b: str) -> int:
     return row[-1]
 
 
+# The word that ends a conversation, said alone: "stop" as Whisper may write it.
+STOP_SHAPES = ["stop", "stopp", "stoppen", "stap", "stob"]
+
+
+def is_stop_word(text: str) -> bool:
+    words = re.findall(r"[^\W\d_]+", re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", text.lower()))
+    return len(words) == 1 and any(_distance(words[0], shape) <= 1 for shape in STOP_SHAPES) and words[0] not in {"top", "shop", "step"}
+
+
 def is_name_shaped(word: str) -> bool:
     return word not in NEVER and any(_distance(word, shape) <= 1 for shape in NAME_SHAPES)
 
@@ -145,6 +154,8 @@ class Name:
         self.spellings = set(DEFAULT_SPELLINGS)
         self.prints: list[np.ndarray] = []
         self.threshold = 0.0
+        self.stop_prints: list[np.ndarray] = []
+        self.stop_threshold = 0.0
         self.learned = {}
         self.load()
 
@@ -156,8 +167,10 @@ class Name:
         try:
             meta = json.loads((self.folder / "name.json").read_text(encoding="utf-8"))
             data = np.load(self.folder / "prints.npz")
-            self.prints = [data[k] for k in sorted(data.files)]
+            self.prints = [data[k] for k in sorted(data.files) if k.startswith("p")]
+            self.stop_prints = [data[k] for k in sorted(data.files) if k.startswith("s")]
             self.threshold = float(meta["threshold"])
+            self.stop_threshold = float(meta.get("stop_threshold", 0.0))
             # Files from version 1 could hold any word ("oh", "go"): only name-shaped ones count.
             self.spellings = set(DEFAULT_SPELLINGS) | {w for w in meta.get("spellings", []) if is_name_shaped(w)}
             if meta.get("version", 1) < 2 and (meta.get("margin") or 0) <= 0:
@@ -166,6 +179,7 @@ class Name:
             self.learned = meta
         except (OSError, ValueError, KeyError):
             self.prints, self.threshold, self.learned = [], 0.0, {}
+            self.stop_prints, self.stop_threshold = [], 0.0
             self.spellings = set(DEFAULT_SPELLINGS)
 
     def forget(self) -> None:
@@ -187,6 +201,17 @@ class Name:
             return False
         return min(dtw(f, p) for p in self.prints) <= self.threshold
 
+    def is_stop(self, text: str, samples: np.ndarray, is_noise: bool) -> bool:
+        """'stop', alone: the word that ends a conversation. Whisper first; the prints for noise."""
+        if not is_noise and is_stop_word(text):
+            return True
+        if not self.stop_prints or self.stop_threshold <= 0 or (not is_noise and len(re.findall(r"[^\W\d_]+", text)) > 1):
+            return False
+        f = features(samples)
+        if len(f) == 0 or len(f) * HOP > MAX_NAME_SEC * RATE:
+            return False
+        return min(dtw(f, p) for p in self.stop_prints) <= self.stop_threshold
+
     def hear(self, text: str, samples: np.ndarray, is_noise: bool) -> tuple[bool, str]:
         """(addressed to HAL, the rest of the sentence). Whisper first; the prints for short noise."""
         if not is_noise:
@@ -199,7 +224,13 @@ class Name:
             return False, ""
         return (self.sounds_like(samples), "")
 
-    def learn(self, names: list[tuple[np.ndarray, str]], others: list[np.ndarray]) -> dict:
+    def learn(
+        self,
+        names: list[tuple[np.ndarray, str]],
+        others: list[np.ndarray],
+        stops: list[tuple[np.ndarray, str]] | None = None,
+    ) -> dict:
+        stops = stops or []
         """From five recordings of the name (with Whisper's text) and a few ordinary sentences:
         the spellings, the prints and a threshold. Saves and returns what was learned."""
         # Spellings: only words shaped like his name, written so at least twice.
@@ -256,8 +287,37 @@ class Name:
                 if margin is not None and margin <= 0
                 else "speech recognition did not write your HAL as his name"
             )
+        # "stop": its own prints, kept apart from his name and from the ordinary sentences.
+        stop_prints = [p for p in (features(s) for s, _ in stops) if len(p) >= 6]
+        stop_threshold = 0.0
+        by_stop_word = [is_stop_word(t) for _, t in stops]
+        by_stop_sound = [False] * len(stop_prints)
+        if len(stop_prints) >= 2:
+            own_stop = [min(dtw(p, q) for j, q in enumerate(stop_prints) if j != k) for k, p in enumerate(stop_prints)]
+            length = int(np.median([len(p) for p in stop_prints]))
+            negatives = list(prints)
+            for s in others:
+                f_all = features(s)
+                for start in range(0, max(1, len(f_all) - length + 1), 10):
+                    w = f_all[start : start + length]
+                    if len(w) >= 6:
+                        negatives.append((w - w.mean(axis=0)) / (w.std(axis=0) + 1e-3))
+            near = min((min(dtw(n, p) for p in stop_prints) for n in negatives), default=float("inf"))
+            reach_stop = float(max(own_stop))
+            if near == float("inf"):
+                stop_threshold = reach_stop * 1.15
+            elif reach_stop < near:
+                stop_threshold = reach_stop + 0.5 * (near - reach_stop)
+            by_stop_sound = [d <= stop_threshold for d in own_stop] if stop_threshold > 0 else by_stop_sound
+        meta["stop_threshold"] = round(float(stop_threshold), 4)
+        meta["stop_caught"] = sum(1 for i in range(len(stops)) if by_stop_word[i] or (i < len(by_stop_sound) and by_stop_sound[i]))
+        meta["stop_of"] = len(stops)
         self.folder.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(self.folder / "prints.npz", **{f"p{i}": p for i, p in enumerate(prints)})
+        np.savez_compressed(
+            self.folder / "prints.npz",
+            **{f"p{i}": p for i, p in enumerate(prints)},
+            **{f"s{i}": p for i, p in enumerate(stop_prints)},
+        )
         (self.folder / "name.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
         self.load()
         return meta

@@ -15,7 +15,8 @@ import {
   receptionKind,
 } from './dossier'
 import type { Dossier, Git, Moment, Visit } from './dossier'
-import { acknowledgement, addressed, ATTEND_MS, hearsName, isSalient, keep, remarkFrom, shouldWeigh, tally, weighRequest } from './ears'
+import { closing, conversationNote, IDLE_CLOSING, IDLE_END_MS, isLook, isTypedStop, presenceStrength, SEND_DELAY_MS } from './conversation'
+import { acknowledgement, addressed, hearsName, isSalient, keep, remarkFrom, shouldWeigh, tally, weighRequest } from './ears'
 import type { Heard, HeardTally, ReflectState, Source } from './ears'
 import { advance, bandFor, HOW_TO_CALL, LEARN_INTRO, learnedNote, lineFor, PRACTICE_MS, STEP_TIMEOUT_MS } from './learn'
 import type { Learn, Learned } from './learn'
@@ -105,11 +106,13 @@ let isDeaf = false
 let reflect: ReflectState = { newSec: 0, lastWeighedAt: -Infinity, remarks: [] }
 let isWeighing = false
 let isAddressing = false
-/** After his name alone: until when the next microphone sentence is a command (wall clock). */
-let attendUntil = -Infinity
-/** The acknowledgement on its way; the window starts again once he has finished saying it. */
-let ackId: string | undefined
+/** A conversation (conversation.ts): open from "HAL" until "stop". */
+let conversation: { since: number; lastAt: number } | undefined
+let conversationSerial = 0
+/** The next prompt asked him to look (the look itself runs beside it). */
+let pendingLook = false
 let lastAck: string | undefined
+let lastClosing: string | undefined
 /** /hal learn in progress (learn.ts); undefined otherwise. */
 let learning: Learn | undefined
 let learnSerial = 0
@@ -356,7 +359,7 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       break
     case 'heard':
       if ((message.src === 'mic' || message.src === 'loop') && typeof message.text === 'string') {
-        await onHeard($, message.src, message.text, typeof message.sec === 'number' ? message.sec : 0, message.name === true)
+        await onHeard($, message.src, message.text, typeof message.sec === 'number' ? message.sec : 0, message.name === true, message.stop === true)
       }
       break
     case 'learn':
@@ -382,11 +385,6 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       isAway = false
       await setMood($, 'idle')
       lookAtYou()
-      if (ackId !== undefined && message.id === ackId) {
-        ackId = undefined
-        attendUntil = (await $.clock.now()) + ATTEND_MS
-        lookAtYou(ATTEND_MS)
-      }
       await reveal($, sayLines.get(String(message.id)))
       sayLines.delete(String(message.id))
       sayHazes.delete(String(message.id))
@@ -829,7 +827,7 @@ function stopWatch() {
   watchTimer = undefined
 }
 
-async function onHeard($: $, src: Source, text: string, sec: number, isName = false) {
+async function onHeard($: $, src: Source, text: string, sec: number, isName = false, isStop = false) {
   const settings = await read($, settingsAtom)
   if (!settings.isOn || !settings.listen) {
     return
@@ -844,29 +842,33 @@ async function onHeard($: $, src: Source, text: string, sec: number, isName = fa
     lookAtYou(1800)
   }
   // Commands come from the microphone only: a video can never instruct Claude Code.
-  // The ears recognise the name as this guest says it (/hal learn); the text is then the rest.
-  if (src === 'mic' && isName) {
-    if (text) {
-      attendUntil = -Infinity
-      ackId = undefined
-      void onAddressed($, text).catch(() => undefined)
-    } else {
-      void onName($, settings).catch(() => undefined)
-    }
-
-    return
-  }
   if (src === 'mic') {
-    const command = addressed(text)
-    if (command === '') {
-      void onName($, settings).catch(() => undefined)
+    // The ears recognise the name and "stop" as this guest says them (/hal learn); with the
+    // name, the text is the rest of the sentence. Without the ears' word, the regex decides.
+    const command = isName ? text : addressed(text)
+    if (conversation) {
+      conversation = { ...conversation, lastAt: at }
+      if (isStop) {
+        void closeConversation($, 'spoken').catch(() => undefined)
+      } else if (command === '') {
+        // His name again, while he is already here: only the eye answers.
+        lookAtYou(2500)
+      } else {
+        void onAddressed($, command ?? text.trim(), isLook(command ?? text)).catch(() => undefined)
+      }
 
       return
     }
-    if (command !== undefined || at < attendUntil) {
-      attendUntil = -Infinity
-      ackId = undefined
-      void onAddressed($, command ?? text.trim()).catch(() => undefined)
+    if (isStop) {
+      return
+    }
+    if (command === '') {
+      void openConversation($, settings).catch(() => undefined)
+
+      return
+    }
+    if (command !== undefined) {
+      void onAddressed($, command, false).catch(() => undefined)
 
       return
     }
@@ -877,22 +879,69 @@ async function onHeard($: $, src: Source, text: string, sec: number, isName = fa
   }
 }
 
-/**
- * "HAL." alone from the microphone: he answers in a word or two, the eye holds you, and the
- * next sentence you say within ATTEND_MS (counted from the end of his answer) is the command.
- */
-async function onName($: $, settings: HalSettings) {
-  const now = await $.clock.now()
-  const isAttending = now < attendUntil
-  attendUntil = now + ATTEND_MS
-  lookAtYou(ATTEND_MS)
-  await showSaid($, 'HAL listens. Say it.', ATTEND_MS)
-  if (isAttending || isAddressing) {
+// ---------- a conversation (conversation.ts): "HAL" opens it, "stop" ends it ----------
+
+async function openConversation($: $, settings: HalSettings) {
+  if (conversation || isAddressing) {
     return
   }
+  const now = await $.clock.now()
+  conversation = { since: now, lastAt: now }
+  conversationSerial += 1
+  const serial = conversationSerial
   const line = acknowledgement(await currentLevel($, settings), lastAck, Math.random())
   lastAck = line
-  ackId = await sayPlain($, line, 'ack')
+  lookAtYou(4000)
+  await showSaid($, 'HAL listens · say "stop" to end it', 0)
+  notes.push('The guest opened a conversation with HAL by saying his name. It stays open until they say or type "stop".')
+  if (settings.haze && !desk.micBusy) {
+    await ensureHost($)
+    messageCount += 1
+    await send($, { kind: 'presence', on: true, id: `open-${messageCount}`, text: speakable(line), strength: presenceStrength(0) })
+  } else {
+    await sayPlain($, line, 'open')
+  }
+  // The haze settles in; two minutes of silence while he is idle, or a call, end it.
+  void (async () => {
+    while (serial === conversationSerial && conversation) {
+      await $.clock.sleep(10_000)
+      if (serial !== conversationSerial || !conversation) {
+        return
+      }
+      const at = await $.clock.now()
+      if (desk.micBusy) {
+        await closeConversation($, 'call')
+
+        return
+      }
+      if (mood === 'idle' && at - conversation.lastAt > IDLE_END_MS) {
+        await closeConversation($, 'idle')
+
+        return
+      }
+      if (settings.haze) {
+        await send($, { kind: 'presence', strength: presenceStrength(at - conversation.since) })
+      }
+    }
+  })().catch(() => undefined)
+}
+
+async function closeConversation($: $, why: 'spoken' | 'typed' | 'idle' | 'call' | 'off') {
+  if (!conversation) {
+    return
+  }
+  conversation = undefined
+  conversationSerial += 1
+  await showSaid($, '', 1)
+  if (why !== 'off' && why !== 'call') {
+    const settings = await read($, settingsAtom)
+    const line = why === 'idle' ? IDLE_CLOSING : closing(await currentLevel($, settings), lastClosing, Math.random())
+    lastClosing = line
+    // Said inside the conversation's haze; the eye leaves after it.
+    await sayPlain($, line, 'close')
+  }
+  await send($, { kind: 'presence', on: false })
+  notes.push(`The guest's conversation with HAL ended (${why === 'idle' ? 'HAL ended it after two minutes of silence' : why === 'call' ? 'a call began' : `the guest ${why === 'typed' ? 'typed' : 'said'} "stop"`}). Back to the usual rhythm: a spoken line in about one reply in five.`)
 }
 
 /** A plain line: no haze, no budget, not kept among his remarks. Silent during a call. */
@@ -971,15 +1020,23 @@ async function onLearned($: $, result: Learned) {
 }
 
 /**
- * "HAL, ..." from the microphone. The command stands in the prompt box for 1.5 s; any change
- * there (typing, clearing it) keeps it from being sent. A mod cannot hear Esc at an idle prompt.
+ * "HAL, ..." from the microphone, or any sentence in a conversation. It stands in the prompt box
+ * for 1.5 s (1 s in a conversation); any change there (typing, clearing it) keeps it from being
+ * sent. A mod cannot hear Esc at an idle prompt. `isLookRequest`: he looks through the webcam first.
  */
-async function onAddressed($: $, command: string) {
+async function onAddressed($: $, command: string, isLookRequest: boolean) {
   if (isAddressing) {
     return
   }
   isAddressing = true
   try {
+    const wait = conversation ? SEND_DELAY_MS : 1500
+    if (isLookRequest) {
+      // The look comes first (about two seconds, the camera light shows), so its facts travel
+      // with this prompt.
+      pendingLook = true
+      await lookIfDue($, true).catch(() => undefined)
+    }
     const box = await $.prompt.read()
     if (box.text.trim() !== '') {
       await showSaid($, `You said: ${command} · not sent, your prompt holds a draft`, 5000)
@@ -992,15 +1049,15 @@ async function onAddressed($: $, command: string) {
 
       return
     }
-    await showSaid($, `You said: ${command} · sending in 1.5 s, change it to stop`, 0)
-    await $.clock.sleep(1500)
+    await showSaid($, `You said: ${command} · sending in ${wait / 1000} s, change it to stop`, 0)
+    await $.clock.sleep(wait)
     if ((await $.prompt.read()).text !== command) {
       await showSaid($, 'Not sent.', 2500)
 
       return
     }
     await $.prompt.fill({ text: '' })
-    await showSaid($, '', 0)
+    await showSaid($, conversation ? 'HAL listens · say "stop" to end it' : '', 0)
     if (learning?.step === 'practice') {
       // The first real call ends the walk-through.
       learning = undefined
@@ -1182,6 +1239,9 @@ async function sleep($: $) {
   await $.ui.close({ id: PANE }).catch(() => undefined)
   hearing = { mic: false, loop: false }
   heard = []
+  if (conversation) {
+    await closeConversation($, 'off')
+  }
   await send($, { kind: 'farewell-cancel' })
   await send($, { kind: 'glow', on: false })
   // Off is off in every session: the one process goes, whoever owns it.
@@ -1487,6 +1547,18 @@ export const register: Register = on => {
     if (!settings.isOn) {
       return next(e)
     }
+    // "stop" alone ends a conversation; it never reaches the model.
+    if (conversation && isTypedStop(e.text)) {
+      // `extra` holds the spoken note when this prompt came from the microphone.
+      await closeConversation($, extra.length > 0 ? 'spoken' : 'typed')
+
+      return { drop: '◉ The conversation is over.' }
+    }
+    if (conversation) {
+      conversation = { ...conversation, lastAt: await $.clock.now() }
+      extra.push(conversationNote(extra.length > 0, pendingLook, settings.see))
+    }
+    pendingLook = false
     const now = await $.clock.now()
     watch = { ...watch, lastPromptAt: now, lastActivityAt: now }
     const local = new Date(now + (utcOffsetMinutes ?? 0) * 60_000)
@@ -1650,7 +1722,8 @@ export const register: Register = on => {
     // more than five minutes. A grep that found nothing on the way is not a scene.
     const isMoment = lastToolFailed || hour < 5 || e.durationMs > 300_000
     await remember($, line, settings)
-    if (!(await speak($, line, settings, isMoment ? 'moment' : 'line', lastToolFailed))) {
+    // In a conversation he always waits two to three seconds before he answers.
+    if (!(await speak($, line, settings, isMoment ? 'moment' : 'line', lastToolFailed || conversation !== undefined))) {
       await reveal($, held)
     }
 

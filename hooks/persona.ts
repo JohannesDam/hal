@@ -392,8 +392,8 @@ export const HELP = `/hal                      wake HAL, or put him to sleep
 /hal deaf                 HAL stops listening: both inputs close
 /hal mic <name>|auto      which microphone HAL listens to
 /hal see on|off           HAL looks through the webcam now and then (seen on this machine, nothing kept)
-/hal learn                HAL learns how you say his name: a short spoken walk-through
-/hal forget               HAL forgets how you say his name
+/hal learn                HAL learns how you say "HAL" and "stop": a short spoken walk-through
+/hal forget               HAL forgets how you say them
 /hal check               which voice, ears and screens HAL uses, and how fast he answers`
 
 /** The HAL process's own report, for /hal check. */
