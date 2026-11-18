@@ -106,6 +106,31 @@ class Words(unittest.TestCase):
         self.assertFalse(is_stop_word("stop the build"))
 
 
+class PreRollAndLanguage(unittest.TestCase):
+    def test_pre_roll_adds_what_came_just_before(self):
+        import numpy as np
+
+        ears = load_ears()
+        history = np.arange(48000, dtype=np.float32)  # the last 3 s fed to the VAD, fed = 60000
+        segment = np.ones(8000, dtype=np.float32)
+        padded = ears.with_pre_roll(segment, 40000, 60000, history)
+        self.assertEqual(len(padded), 8000 + ears.PRE_ROLL)
+        self.assertEqual(padded[0], 40000 - ears.PRE_ROLL - 12000)  # history starts at sample 12000
+        # Indices that do not fit (after a reset) add nothing.
+        self.assertEqual(len(ears.with_pre_roll(segment, 70000, 60000, history)), 8000)
+        self.assertEqual(len(ears.with_pre_roll(segment, 5000, 60000, history)), 8000)
+        # Close to the start of the history: only what there is.
+        self.assertEqual(len(ears.with_pre_roll(segment, 12100, 60000, history)), 8000 + 100)
+
+    def test_a_call_survives_a_wrong_language_label(self):
+        ears = load_ears()
+        self.assertTrue(ears.call_despite_language("Hell, please wake up.", "de"))
+        self.assertTrue(ears.call_despite_language("Hal, go to sleep.", "af"))
+        self.assertFalse(ears.call_despite_language("Und die Warnke zu sehen und", "de"))
+        self.assertFalse(ears.call_despite_language("Στοπ!", "el"))
+        self.assertFalse(ears.call_despite_language("Hell, please wake up.", "en"))  # not noise to begin with
+
+
 class Noise(unittest.TestCase):
     def test_whisper_noise_is_dropped(self):
         ears = load_ears()

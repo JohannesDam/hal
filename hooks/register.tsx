@@ -137,6 +137,8 @@ let conversation: { since: number; lastAt: number } | undefined
 let conversationSerial = 0
 /** The next prompt asked him to look (the look itself runs beside it). */
 let pendingLook = false
+/** Microphone segments the ears threw away in the last ten minutes, and why (never the words). */
+let dropped: { at: number; why: string }[] = []
 let lastAck: string | undefined
 let lastClosing: string | undefined
 /** /hal learn in progress (learn.ts); undefined otherwise. */
@@ -399,6 +401,13 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
           message.stop === true,
           message.wake === true,
         )
+      }
+      break
+    case 'dropped':
+      // Why a microphone segment was not heard, never what it said: /hal check shows the count.
+      if (typeof message.why === 'string') {
+        const at = await $.clock.now()
+        dropped = [...dropped.filter(d => at - d.at < 10 * 60_000), { at, why: message.why }].slice(-50)
       }
       break
     case 'learn':
@@ -915,7 +924,9 @@ async function onHeard($: $, src: Source, text: string, sec: number, isName = fa
     // The sentences decide first: "HAL, please wake up" opens, "HAL, go to sleep" ends.
     if (isWake || isWakePhrase(text)) {
       if (conversation) {
+        // Already here: a silent look felt like not being heard. He says so.
         lookAtYou(2500)
+        void sayPlain($, 'I am already here.', 'here').catch(() => undefined)
       } else {
         void openConversation($, settings).catch(() => undefined)
       }
@@ -1649,7 +1660,14 @@ export const register: Register = on => {
             ? `on; last look at ${localTime(seen.at, utcOffsetMinutes ?? 0)}: ${seen.faces} face${seen.faces === 1 ? '' : 's'}, light ${seen.light.toFixed(2)}`
             : 'on; no look yet, or the webcam gave nothing (needs tools\\setup-voice.ps1 and a free camera)'
 
-        return { text: `${describeCheck(await askHost($), isHostOwner)}\n  sight           ${sight}` }
+        const now = await $.clock.now()
+        const lately = dropped.filter(d => now - d.at < 10 * 60_000)
+        const reasons = [...new Set(lately.map(d => d.why))].map(why => `${why} ×${lately.filter(d => d.why === why).length}`)
+        const ears = lately.length
+          ? `${lately.length} microphone segment${lately.length === 1 ? '' : 's'} not heard in the last ten minutes (${reasons.join(', ')})`
+          : 'nothing from the microphone thrown away in the last ten minutes'
+
+        return { text: `${describeCheck(await askHost($), isHostOwner)}\n  sight           ${sight}\n  not heard       ${ears}` }
       }
     }
   })

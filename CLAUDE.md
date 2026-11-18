@@ -54,6 +54,8 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 - The sherpa-onnx keyword spotter (GigaSpeech 3.3M) misses a lone "HAL" at every threshold and fires on "the hall": not usable for his name.
 - The ears open 0.6 s after his voice ends, inside the stare: at once (0.3.2) they heard his own last word back through the laptop speakers (sound-card latency, echo); after the whole stare (before 0.3.2) a guest's quick answer was lost.
 - Piper swallows a weak opening vowel ("Again." sounds like "gain"): his short lines start on a strong syllable.
+- The VAD opens a segment only once it is sure of a voice: the first word's start is lost. Microphone segments get 0.3 s of pre-roll (`with_pre_roll`); the VAD's sample index restarts at every `reset()`, so the ears' own count restarts with it.
+- Whisper labels a short English sentence in a Dutch voice as German or Afrikaans now and then: a plain wake or sleep sentence is not dropped for its language (`call_despite_language`).
 - Silero VAD with `min_speech_duration` 0.3 s drops a quiet "stop" (little voice in it); the microphone uses 0.15 s.
 - A lone "HAL" cannot be recognised reliably on a laptop microphone: spellings, learned lone words and MFCC/DTW prints were all tried and removed (0.6). Whole sentences work: keep it that way unless a real wake-word engine comes in.
 - `$.model.complete` takes text only (no images) in this build: the webcam is measured locally instead.

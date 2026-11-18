@@ -17,6 +17,7 @@ stdout, one JSON object per line:
   {"t": "heard", "src": "mic", "name": true, "text": <the rest, or "">, "sec"}  addressed to HAL
   {"t": "heard", "src": "mic", "wake": true, "text": ""}   "HAL, please wake up": a conversation opens
   {"t": "heard", "src": "mic", "stop": true, "text": ""}   "stop" alone or "HAL, go to sleep": it ends
+  {"t": "dropped", "src": "mic", "why": "language de"|"noise", "sec"}   not heard, and why (never the words)
   {"t": "learn", "step": "wake"|"sleep", "got": n, "peak": 0..1 (wake only)}
   {"t": "learned", "ok", "caught", "of", "stop_caught", "stop_of", ...} or {"t": "learned", "forgotten": true}
   {"t": "error", "why"}
@@ -64,6 +65,33 @@ def is_noise(text: str, lang: str) -> bool:
         return True
     letters = sum(c.isascii() and c.isalpha() for c in text)
     return letters < 2 or letters < 0.6 * len(text.replace(" ", "")) or bool(HALLUCINATIONS.search(text))
+
+
+PRE_ROLL = int(0.3 * RATE)
+
+
+def with_pre_roll(segment: np.ndarray, start: int, fed: int, history: np.ndarray) -> np.ndarray:
+    """The segment with up to PRE_ROLL samples of what came just before it. `start`: the VAD's
+    sample index of the segment; `fed`: samples given to the VAD since its reset; `history`: the
+    last of those samples. Nothing is added when the index does not fit (after a reset)."""
+    base = fed - len(history)
+    if start > fed or start <= base:
+        return segment
+    pre = history[max(start - PRE_ROLL, base) - base : start - base]
+    return np.concatenate([pre, segment]) if len(pre) else segment
+
+
+def call_despite_language(text: str, lang: str) -> bool:
+    """Whisper sometimes labels a short English sentence in a Dutch voice as German or Afrikaans.
+    A segment of Latin letters that is plainly a call ("please wake up", "go to sleep") is not
+    thrown away for its language label."""
+    letters = sum(c.isascii() and c.isalpha() for c in text)
+    if not lang or lang in LANGUAGES or letters < 0.8 * len(text.replace(" ", "")):
+        return False
+    from hal_name import SLEEP_RE, WAKE_RE, norm
+
+    n = norm(text)
+    return bool(WAKE_RE.search(n) or SLEEP_RE.search(n))
 
 
 def emit(message: dict) -> None:
@@ -218,20 +246,32 @@ class Source(threading.Thread):
         import soundcard as sc
 
         checked = time.monotonic()
+        # The VAD counts samples from its last reset; `fed` counts the same, and `history` keeps the
+        # last seconds of them, so a microphone segment can start PRE_ROLL earlier: the VAD only
+        # opens once it is sure of a voice, and the first word's start ("HAL", "please") was lost.
+        fed = 0
+        history = np.zeros(0, dtype=np.float32)
         with device.recorder(samplerate=RATE, channels=1, blocksize=BLOCK) as recorder:
             while not self.ears.gate.is_deaf():
                 block = recorder.record(numframes=BLOCK)
                 samples = np.asarray(block, dtype=np.float32).reshape(-1)
                 if self.ears.gate.is_closed():
-                    if self.is_speech or not vad.empty():
+                    # HAL speaks: none of it is heard, and nothing before it is kept as pre-roll.
+                    if fed or self.is_speech or not vad.empty():
                         vad.reset()
+                        fed, history = 0, history[:0]
                         self.set_speech(False)
                     continue
                 vad.accept_waveform(samples)
+                fed += len(samples)
+                history = np.concatenate([history, samples])[-3 * RATE :]
                 self.set_speech(vad.is_speech_detected())
                 while not vad.empty():
                     segment = np.array(vad.front.samples, dtype=np.float32)
+                    start = int(vad.front.start)
                     vad.pop()
+                    if self.kind == "mic":
+                        segment = with_pre_roll(segment, start, fed, history)
                     self.ears.hear(self.kind, segment)
                 if self.kind == "loop" and time.monotonic() - checked > 3:
                     checked = time.monotonic()
@@ -297,12 +337,16 @@ class Ears:
             recognizer.decode_stream(stream)
             text = stream.result.text.strip()
             lang = getattr(stream.result, "lang", "")
-            noise = is_noise(text, lang)
+            noise = is_noise(text, lang) and not (kind == "mic" and call_despite_language(text, lang))
             sec = round(len(segment) / RATE, 1)
             if kind == "mic" and self.learning is not None:
                 self.learn_segment(segment, "" if noise else text)
                 continue
             if noise:
+                if kind == "mic":
+                    # Why the guest was not heard, never what was said: /hal check counts these.
+                    why = f"language {lang}" if lang and lang not in LANGUAGES else "noise"
+                    emit({"t": "dropped", "src": kind, "why": why, "sec": sec})
                 continue
             if kind == "mic":
                 # The sentences decide (hal_name.py): one to open, one to end, then the one-breath

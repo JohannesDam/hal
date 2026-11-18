@@ -127,6 +127,10 @@ About one reply in three, once the work is done, the spoken line may be one quie
 
 What the day of live tests left behind is gone: the acoustic prints and DTW, the learned lone words, the "stop" prints and the walk-through's step for ordinary sentences (it only calibrated the prints). `hal_name.py` is text only (no numpy); the walk-through is "HAL, please wake up" three times, "HAL, go to sleep" three times, the result. Its steps are called `wake` and `sleep` everywhere. The ears' text side has tests (`tests/test_ears.py`), and `tools/release.ps1` does a release in one go.
 
+### Not always heard (0.6.1)
+
+The owner: "please wake up" was not always heard, and the first word often fell away. Microphone segments now start 0.3 s earlier (the VAD opens late); a wake or sleep sentence survives a wrong language label; "please wake up" during an open conversation gets a spoken "I am already here." instead of a silent look; and `/hal check` counts the microphone segments thrown away in the last ten minutes, with why (another language, noise), never the words.
+
 ### Step 10: HAL sees (built; live test open; owner decision 2026-11-18)
 
 The best experience is with a webcam and a microphone.
