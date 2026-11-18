@@ -27,7 +27,11 @@ The character is inspired by the archetype of the calm, polite, unsettling ship'
 | `/hal listen` | HAL listens along: the microphone and what the computer plays (also during a call, until it ends) |
 | `/hal deaf` | HAL stops listening: both inputs close, and what he heard is forgotten |
 | `/hal mic <name>\|auto` | which microphone he listens to (auto: a built-in one first) |
-| `/hal check` | which voice, ears and screens HAL uses, how fast he answers, and what the haze costs |
+| `/hal learn` | HAL learns how you say his name: a short spoken walk-through (`/hal learn stop` ends it) |
+| `/hal forget` | HAL forgets how you say his name |
+| `/hal see on\|off` | HAL looks through the webcam now and then, measured on this machine (off by default) |
+| `/hal check` | which voice, ears and screens HAL uses, how fast he answers, what the haze costs, whether he knows your voice, and his last look |
+| `/hal help` | the commands, and how to call HAL by voice |
 
 Settings are kept between sessions.
 
@@ -45,25 +49,28 @@ Requires Claude Code with mods (function hooks). The voice and the haze need **W
 
 Answer `y` to add the marketplace and pick the user scope.
 
-**To develop it**, clone the repository into your skills folder. Claude Code loads it from there at every start and reloads it when you save:
+Restart Claude Code and type `/hal`. To update later: `/plugin`, or `claude plugin marketplace update hal` and `claude plugin update hal@hal`, then restart.
+
+**To develop it**, clone the repository anywhere and start Claude Code with it as a plugin folder; it reloads the mod when you save a file in `hooks/`:
 
 ```
-git clone https://github.com/JohannesDam/hal.git "%USERPROFILE%\.claude\skills\hal"
+git clone https://github.com/JohannesDam/hal.git
+claude --plugin-dir hal
 ```
 
-Restart Claude Code and type `/hal`.
+Saving in `hooks/` reloads the mod in every session that has it loaded, and those reloads race for HAL's one process: do not develop in one session while HAL is being tried in another.
 
 ## The voice
 
 HAL speaks with **kestrin**, a single-speaker US English [Piper](https://github.com/OHF-voice/piper1-gpl) voice. Its original source may not stay available, so the model is kept as a release of this repository ([voice-kestrin](https://github.com/JohannesDam/hal/releases/tag/voice-kestrin)), outside the source. It runs entirely on the machine, warm in a small Python process (about 0.1 s per line), through HAL's voice chain; "..." in a line becomes real silence, and the full haze carries a generated house tone.
 
-Set it up once per machine (about 650 MB with the speech models and the Python packages, everything in `%LOCALAPPDATA%\hal`; `-NoEars` leaves the speech models out):
+Set it up once per machine (about 700 MB with the speech models and the Python packages, everything in `%LOCALAPPDATA%\hal`; `-NoEars` leaves the speech models out, `-NoSight` leaves out OpenCV and the face model for `/hal see`):
 
 ```
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup-voice.ps1
 ```
 
-It needs Python 3.10 or newer (`winget install Python.Python.3.12`). It downloads the voice from the release and checks its SHA-256, and installs `piper-tts` and `sherpa-onnx` from PyPI. With `-Kokoro` it also fetches the Kokoro model (about 350 MB) with the earlier voice **am_michael**, which then speaks when kestrin is missing. Without either, HAL speaks with the Windows voice George; `/hal check` says which voice is in use.
+It needs Python 3.10 or newer (`winget install Python.Python.3.12`). It downloads the voice from the release, the speech models and the face model (YuNet), checks each file's SHA-256, and installs `piper-tts`, `sherpa-onnx`, `soundcard` and `opencv-python-headless` from PyPI. With `-Kokoro` it also fetches the Kokoro model (about 350 MB) with the earlier voice **am_michael**, which then speaks when kestrin is missing. Without either, HAL speaks with the Windows voice George; `/hal check` says which voice is in use.
 
 ## Host and guest
 
@@ -116,14 +123,15 @@ While HAL is awake he listens to a microphone and to what the computer plays (th
 
 **The best experience is with a microphone and a webcam**, in a quiet room, near the microphone. `/hal check` tells you whether he knows your voice.
 
-## Seeing (`/hal see on`)
-
-Off until you switch it on. Then HAL takes one look through the webcam when he wakes and at most every twenty minutes while you work, never during a call. The camera light shows each time; he does not hide it. The picture is measured **on this machine** (`assets/hal-sight.py`: OpenCV and the YuNet face detector) and thrown away at once: never written to disk, never sent anywhere. What remains are a few numbers, and only those reach his notes: how many faces, how close the nearest one is and on which side, how bright the room is, lamp light or daylight, a bright window behind you. And what changed since the look before: someone else came in, the desk was empty, the room went dark, you moved closer. Anyone else is only ever "someone else". `/hal see off` forgets both looks.
 - **Overheard:** after a while of speech, or a word like "error", HAL asks the model (Haiku) whether one true remark is worth saying. Usually it is not; at most two an hour, never while you type. **That snippet of the last minutes leaves the machine** (it goes to Claude's API), and in a call that includes other people's words.
 - **During a call:** while another app holds the microphone, HAL is deaf by himself. `/hal listen` keeps him listening until that call ends.
 - **Seen:** the eye's aperture narrows while he hears speech, he looks at you when he hears his name, the hint line says "HAL listens", the band shows a closed-ear mark while he is deaf, and Windows shows its microphone indicator whenever he listens.
 
 A Bluetooth headset drops to mono "hands-free" sound while its microphone is open. With a built-in microphone (a laptop) HAL picks that one, and the headset keeps its sound; on a desktop without one, `/hal mic` chooses, or `/hal deaf` closes it.
+
+## Seeing (`/hal see on`)
+
+Off until you switch it on. Then HAL takes one look through the webcam when he wakes and at most every twenty minutes while you work, never during a call. The camera light shows each time; he does not hide it. The picture is measured **on this machine** (`assets/hal-sight.py`: OpenCV and the YuNet face detector) and thrown away at once: never written to disk, never sent anywhere. What remains are a few numbers, and only those reach his notes: how many faces, how close the nearest one is and on which side, how bright the room is, lamp light or daylight, a bright window behind you. And what changed since the look before: someone else came in, the desk was empty, the room went dark, you moved closer. Anyone else is only ever "someone else". `/hal see off` forgets both looks.
 
 ## How it works
 
@@ -137,7 +145,7 @@ A Bluetooth headset drops to mono "hands-free" sound while its microphone is ope
 - `assets/hal-ears.py`: the ears, started by HAL's process while he listens: the microphone and the loopback (soundcard, WASAPI), a VAD per input, Whisper small for both; it reports speech starting and stopping and what was said, is gated while HAL speaks, and goes deaf while another app holds the microphone. `hooks/ears.ts`: what the mod does with it (spoken commands, his name alone, overheard remarks, the tally per day).
 - `assets/hal-sight.py`: one look through the webcam, reduced to numbers (faces, distance, side, light, warmth, backlight); the frame never leaves the process. `hooks/sight.ts`: those numbers as facts, and what changed between two looks.
 - `assets/hal_name.py`: his name as this guest says it: the spellings and acoustic prints from `/hal learn`, and the match (DTW) for short segments Whisper could not read. `hooks/learn.ts`: the walk-through's steps, lines and texts.
-- `tools/setup-voice.ps1`: downloads the voice and the speech models (each checked by SHA-256) and builds the Python environment.
+- `tools/setup-voice.ps1`: downloads the voice, the speech models and the face model (each checked by SHA-256) and builds the Python environment.
 - `tools/render-pictures.ps1` with `tools/render-terminal.mjs`: renders the pictures in `docs/images` from the mod's own drawing code, offscreen (Node 22.6 or newer, Microsoft Edge). Run it again when the eye or the haze changes.
 - `assets/hal.ps1`: one line from a shell, for testing: `powershell -NoProfile -STA -ExecutionPolicy Bypass -File hal.ps1 -Text "Nothing was deleted. I checked."`. When HAL's process runs, the line goes to it.
 
@@ -147,5 +155,6 @@ Tests: `claude plugin test .` runs `hooks/hal.test.tsx` and `hooks/units.test.ts
 
 ## Next
 
+- A live test of `/hal learn`, calling him by voice, and `/hal see` on the laptop.
 - A week of daily use on a laptop (plan step 9).
 - The design team's plan for v0.2: [docs/plan-v0.2.md](docs/plan-v0.2.md); where it stands and what is open: [docs/status-v0.2.md](docs/status-v0.2.md).

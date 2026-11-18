@@ -1,6 +1,6 @@
 # HAL v0.2: status
 
-Where the build stands against [plan-v0.2.md](plan-v0.2.md): steps 1–4 are done; steps 5–8 are built and wait for a live test; step 9 (a week on the laptop) is open. Each open item names what the plan asks and how to test it.
+Where the build stands against [plan-v0.2.md](plan-v0.2.md) (version 0.2.0): steps 1–4 are done; steps 5–8 and 10 (seeing) are built and wait for a live test; step 9 (a week on the laptop) is open. Where this file and the plan disagree, this file is current. Each open item names what the plan asks and how to test it.
 
 ## Done
 
@@ -35,13 +35,13 @@ Both reports are kept locally (`notes/`, not in the repository). Applied:
 - **Originality:** the test line that came close to the archetype's stock self-check is gone; so are the unused fixed greetings.
 - **The yardstick** lost the jokes and the lines that claim what HAL cannot count; it gained countable examples in other shapes, and the style filter now treats the yardstick as said (never echo it) and refuses a second short closing sting within six lines.
 - **Level 2** no longer says his subtext aloud; `sometimes` means about one reply in five; the per-prompt note no longer hands the model an adjective ("ominous") as a stage direction.
-- **The full haze** comes for an error that stayed an error (the turn's last tool call failed), after midnight, or after a job of more than five minutes; a line typed away before its first word gives its haze back to the budget.
+- **The full haze** comes for an error that stayed an error (the turn's last tool call failed), after midnight, or after a job of more than five minutes; a line dropped before its first word (too late to sound) gives its haze back to the budget.
 - **The wordless eye** follows an event (Esc, a force push, at level 3), never a dice roll.
 - **Timing:** 0.6 s of looking after the iris opens, before the first word (2.0 s in all); two seconds of staring after the last word (three for the wordless eye); the house tone fades 0.5 s after the voice.
 - **The eye while he speaks:** the aperture holds (only the rim follows the voice); the darts stay, every 3–6 s. In the band the eye stays centred on the horizon and wanders every 40–70 s: no red light travelling along a line.
 - **The voice** is levelled to RMS 0.16 (was 0.1), the house tone raised with it; the 0.89 peak limit stays.
 - **The haze** is an oval sized to the screen, so the top and bottom edges darken on a wide screen too.
-- **Reception:** one fact, two at most; the day counts as received only when the line was heard (typed away: once more at the next quiet moment); back within the hour, also past midnight, only a look.
+- **Reception:** one fact, two at most; the day counts as received only when the line was heard (dropped: once more at the next quiet moment); back within the hour, also past midnight, only a look.
 - **Farewell:** at most ten words; refreshed every three minutes; never played while any app holds a microphone.
 - **Facts:** the counts in the fact block are named as HAL's own work at the guest's request; the overheard remark sets what was heard against a fact, never retells a video or call.
 - **The pane** says "waiting" instead of "listening" while he is deaf.

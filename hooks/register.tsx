@@ -144,7 +144,7 @@ let isDetailUsed = false
 const pendingLines = new Set<string>()
 const revealedLines = new Set<string>()
 const sayLines = new Map<string, string>()
-/** The say messages that took a full haze: one dropped by typing gives it back to the budget. */
+/** The say messages that took a full haze: one dropped before its first word gives it back to the budget. */
 const sayHazes = new Set<string>()
 /** The reception line on its way: the day counts as received once it was heard. */
 let receptionSay: { id: string; line: string; tries: number } | undefined
@@ -403,13 +403,10 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       await setMood($, 'idle')
       await reveal($, sayLines.get(String(message.id)))
       sayLines.delete(String(message.id))
-      if (String(message.why).startsWith('typing')) {
-        await touch($, v => ({ ...v, interrupted: v.interrupted + 1 }))
-        // Typed away before the first word: that haze was never seen.
-        if (sayHazes.delete(String(message.id))) {
-          hazeTimes = hazeTimes.slice(0, -1)
-          await $.store.set('hazeTimes', hazeTimes)
-        }
+      // Dropped before the first word (too late to sound, or an error): that haze was never seen.
+      if (sayHazes.delete(String(message.id))) {
+        hazeTimes = hazeTimes.slice(0, -1)
+        await $.store.set('hazeTimes', hazeTimes)
       }
       if (receptionSay?.id === message.id) {
         void retryReception($).catch(() => undefined)
@@ -697,7 +694,7 @@ async function markReceived($: $) {
   await saveDossier($)
 }
 
-/** Typed away: once more at the next quiet moment (five seconds without a key, within ten minutes). */
+/** The reception never sounded (dropped): once more at the next quiet moment (five seconds without a key, within ten minutes). */
 async function retryReception($: $) {
   const pending = receptionSay
   receptionSay = undefined
