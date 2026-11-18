@@ -113,6 +113,10 @@ Also fixed: `/hal off` in one session now stops HAL's process whoever owns it, a
 - [ ] Repeat the listening test on laptop speakers (`tools/listening_test.py`).
 - [ ] *Success* on day 7: HAL still on, haze not switched off, no two spoken lines remembered word for word. The dossier (Esc, haze off, `/hal off`) shows honestly whether it annoys.
 
+### Waking him with a sentence (0.4.0, owner's idea)
+
+After many patches the lone "HAL" stayed unreliable on the laptop (one syllable, a clipping microphone beside its own speakers). Whisper hears sentences well: "HAL, please wake up" opens a conversation and "HAL, go to sleep" ends it, however the name comes out ("Hell, please wake up."). Both count only as a short utterance of their own (six words at most). The lone "HAL" and "stop" from `/hal learn` still work where they are recognised; the walk-through is optional.
+
 ### Step 10: HAL sees (built; live test open; owner decision 2026-11-18)
 
 The best experience is with a webcam and a microphone.

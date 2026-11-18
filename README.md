@@ -111,17 +111,19 @@ and in the profile you start Claude Code from: `"colorScheme": "HAL"`.
 While HAL is awake he listens to a microphone and to what the computer plays (the loopback of the default output). Speech is cut out with Silero VAD and written down by multilingual Whisper (Dutch and English), **on this machine**; the words stay in memory for five minutes and are never written to disk. While HAL speaks, his ears are closed.
 
 - **Spoken to:** a sentence from the microphone that starts with his name ("HAL, run the tests") becomes a prompt. It stands in the prompt box for 1.5 s with "You said: …" above it; change or clear it to stop it. Speech from the computer's audio never becomes a command.
-- **A conversation:** say "HAL" alone and he comes: the haze and the eye come over the screen with his first words, and they **stay**. From then on everything you say through the microphone goes to him, without his name: a task, a question, small talk. Each sentence stands in your prompt for one second first ("You said: …"); type or clear it to keep it from being sent. "look" makes him take one look through the webcam before he answers (with `/hal see on`). He answers every time aloud, after a silence of two or three seconds; while you say nothing the aperture narrows and the haze slowly darkens. **"stop"**, said alone or typed alone, ends it: he says a last word and the eye withdraws. After two minutes of silence he ends it himself; a call or `/hal off` ends it at once.
+- **A conversation:** say **"HAL, please wake up"** (or "HAL" alone, once `/hal learn` knows your voice) and he comes: the haze and the eye come over the screen with his first words, and they **stay**. From then on everything you say through the microphone goes to him, without his name: a task, a question, small talk. Each sentence stands in your prompt for one second first ("You said: …"); type or clear it to keep it from being sent. "look" makes him take one look through the webcam before he answers (with `/hal see on`). He answers every time aloud, after a silence of two or three seconds; while you say nothing the aperture narrows and the haze slowly darkens. **"HAL, go to sleep"**, or **"stop"** said alone or typed alone, ends it: he says a last word and the eye withdraws. After two minutes of silence he ends it himself; a call or `/hal off` ends it at once.
 - **`/hal learn`:** a spoken walk-through, once per person and machine. He asks for his name five times, then for "stop" three times, then for two ordinary sentences of yours, tells you how many he caught, and lets you open a conversation for real. While he listens, a bar in the band empties: say the word once inside it; when nothing comes he asks again. He learns how speech recognition writes your words: spellings that resemble "HAL" may start a command ("HAL, …"), and whatever it writes for your "HAL" at least twice (one voice came out as "Go!") counts only when said alone, to open a conversation. He keeps a small acoustic print of each time you said them (never the recording), only on this machine in `%LOCALAPPDATA%\hal\name`. `/hal forget` erases it.
 
 **Talking with HAL**
 
 ```
-"HAL"                      opens a conversation; the eye stays
+"HAL, please wake up"      opens a conversation; the eye stays
 "what time is it", "look"  anything you say goes to him, until
-"stop"                     ends it (said alone, or typed alone)
+"HAL, go to sleep"         ends it (so does "stop", said or typed alone)
 "HAL, what time is it"     one question in one breath, without a conversation
 ```
+
+Whole sentences work far better than a lone "HAL": speech recognition is made for sentences, and a single syllable from a laptop microphone often comes out as another word ("Go", "Oh"). A headset, or at least headphones, helps every part of listening: no echo of his own voice, no clipping, less of the room.
 
 **The best experience is with a microphone and a webcam**, in a quiet room, near the microphone. `/hal check` tells you whether he knows your voice.
 

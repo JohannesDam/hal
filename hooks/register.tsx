@@ -15,7 +15,18 @@ import {
   receptionKind,
 } from './dossier'
 import type { Dossier, Git, Moment, Visit } from './dossier'
-import { closing, conversationNote, IDLE_CLOSING, IDLE_END_MS, isLook, isTypedStop, presenceStrength, SEND_DELAY_MS } from './conversation'
+import {
+  closing,
+  conversationNote,
+  IDLE_CLOSING,
+  IDLE_END_MS,
+  isLook,
+  isSleepPhrase,
+  isTypedStop,
+  isWakePhrase,
+  presenceStrength,
+  SEND_DELAY_MS,
+} from './conversation'
 import { acknowledgement, addressed, hearsName, isSalient, keep, remarkFrom, shouldWeigh, tally, weighRequest } from './ears'
 import type { Heard, HeardTally, ReflectState, Source } from './ears'
 import {
@@ -892,9 +903,15 @@ async function onHeard($: $, src: Source, text: string, sec: number, isName = fa
     // The ears recognise the name and "stop" as this guest says them (/hal learn); with the
     // name, the text is the rest of the sentence. Without the ears' word, the regex decides.
     const command = isName ? text : addressed(text)
+    // The sentences decide first: "HAL, please wake up" opens, "HAL, go to sleep" ends.
+    if (!conversation && isWakePhrase(text)) {
+      void openConversation($, settings).catch(() => undefined)
+
+      return
+    }
     if (conversation) {
       conversation = { ...conversation, lastAt: at }
-      if (isStop) {
+      if (isStop || isSleepPhrase(text)) {
         void closeConversation($, 'spoken').catch(() => undefined)
       } else if (command === '') {
         // His name again, while he is already here: only the eye answers.
@@ -938,7 +955,7 @@ async function openConversation($: $, settings: HalSettings) {
   const line = acknowledgement(await currentLevel($, settings), lastAck, Math.random())
   lastAck = line
   lookAtYou(4000)
-  await showSaid($, 'HAL listens · say "stop" to end it', 0)
+  await showSaid($, 'HAL listens · "HAL, go to sleep" or "stop" ends it', 0)
   notes.push('The guest opened a conversation with HAL by saying his name. It stays open until they say or type "stop".')
   if (settings.haze && !desk.micBusy) {
     await ensureHost($)
@@ -1157,7 +1174,7 @@ async function onAddressed($: $, command: string, isLookRequest: boolean) {
       return
     }
     await $.prompt.fill({ text: '' })
-    await showSaid($, conversation ? 'HAL listens · say "stop" to end it' : '', 0)
+    await showSaid($, conversation ? 'HAL listens · "HAL, go to sleep" or "stop" ends it' : '', 0)
     if (learning?.step === 'practice') {
       // The first real call ends the walk-through.
       learning = undefined

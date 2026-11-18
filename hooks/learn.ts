@@ -46,13 +46,14 @@ What he learns stays on this machine (%LOCALAPPDATA%\\hal\\name): how speech rec
 
 /** How to talk with him: shown after learning, and in /hal help. */
 export const HOW_TO_CALL = `Talking with HAL:
-  "HAL"            opens a conversation. The eye comes over the screen and stays.
-  ...              everything you say from then on goes to him: a task, a question, small talk,
-                   "look" (he looks through the webcam, with /hal see on). Each sentence stands in
-                   your prompt for a moment first; type or clear it to keep it from being sent.
-  "stop"           ends it, said alone or typed alone. After two minutes of silence he ends it himself.
-  "HAL, what time is it"   one question in one breath, without a conversation.
-  Only the microphone can call him, never what the computer plays.`
+  "HAL, please wake up"   opens a conversation. The eye comes over the screen and stays.
+  ...                     everything you say from then on goes to him: a task, a question, small
+                          talk, "look" (he looks through the webcam, with /hal see on). Each sentence
+                          stands in your prompt for a moment first; type or clear it to stop it.
+  "HAL, go to sleep"      ends it; so does "stop", said or typed alone. Two minutes of silence too.
+  "HAL, what time is it"  one question in one breath, without a conversation.
+  Whole sentences work best: speech recognition hears a sentence far better than one word.
+  /hal learn can teach him your lone "HAL" and "stop" as well. Only the microphone can call him.`
 
 export function bandFor(learn: Learn): string {
   switch (learn.step) {

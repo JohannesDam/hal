@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { beginVisit, endVisit, factBlock, parseGit, readDossier, receptionKind } from './dossier'
 import { acknowledgement, addressed, keep, remarkFrom, shouldWeigh, tally } from './ears'
-import { closing, conversationNote, isLook, isTypedStop, presenceStrength } from './conversation'
+import { closing, conversationNote, isLook, isSleepPhrase, isTypedStop, isWakePhrase, presenceStrength } from './conversation'
 import { advance, bandFor, learnedNote, levelFactor, levelLine, lineFor, NAME_TIMES, NOTHING_HEARD, OTHER_TIMES, STOP_TIMES, windowBand, windowMs } from './learn'
 import type { Learn } from './learn'
 import { initiative, newWatch, noteTest, testKey } from './moments'
@@ -42,6 +42,14 @@ test('a conversation: typed stop, look, the haze settling in, the closing lines'
   expect(isTypedStop(' Stop. ')).toBe(true)
   expect(isTypedStop('stop the build')).toBe(false)
   expect(isTypedStop('please stop')).toBe(false)
+  // The sentences that open and close it, however the name was written.
+  expect(isWakePhrase('Hell, please wake up.')).toBe(true)
+  expect(isWakePhrase('Go, wake up.')).toBe(true)
+  expect(isWakePhrase('HAL, word wakker.')).toBe(true)
+  expect(isWakePhrase('I really need to wake up earlier tomorrow, I think.')).toBe(false)
+  expect(isSleepPhrase('Hell, go to sleep.')).toBe(true)
+  expect(isSleepPhrase('Go to sleep.')).toBe(true)
+  expect(isSleepPhrase('The kids did not want to go to sleep last night at all.')).toBe(false)
   expect(isLook('look')).toBe(true)
   expect(isLook('Kijk eens naar mij')).toBe(true)
   expect(isLook('can you look at me now')).toBe(true)

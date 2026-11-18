@@ -7,6 +7,18 @@ export const IDLE_END_MS = 2 * 60_000
 /** A spoken sentence stands in the prompt this long before it is sent; a change stops it. */
 export const SEND_DELAY_MS = 1000
 
+const words = (text: string) => text.match(/[\p{L}']+/gu) ?? []
+
+/**
+ * "HAL, please wake up": a whole sentence, so speech recognition has something to hold on to,
+ * however it writes the name ("Hell, wake up."). Short utterances only: "I need to wake up
+ * earlier tomorrow, I think" is not addressed to him.
+ */
+export const isWakePhrase = (text: string) => words(text).length <= 6 && /\bwake\s*up\b|\bwakker\b/i.test(text)
+
+/** "HAL, go to sleep": the conversation ends, as "stop" ends it. Short utterances only. */
+export const isSleepPhrase = (text: string) => words(text).length <= 6 && /\bgo to sleep\b|\bsleep now\b|\bga slapen\b/i.test(text)
+
 /** "stop" typed alone (any case, an optional full stop): the conversation ends, nothing is sent. */
 export const isTypedStop = (text: string) => /^\s*(stop|stopp|stoppen)\s*[.!]?\s*$/i.test(text)
 
