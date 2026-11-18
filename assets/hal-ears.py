@@ -307,7 +307,11 @@ class Ears:
             if kind == "mic":
                 named, rest = self.name.hear(text, segment, noise)
                 if named:
-                    emit({"t": "heard", "src": kind, "name": True, "text": rest, "lang": lang, "sec": sec})
+                    message = {"t": "heard", "src": kind, "name": True, "text": rest, "lang": lang, "sec": sec}
+                    if not noise and self.name.is_alone_call(text):
+                        # A learned lone word ("Go!"): in a conversation it is just speech.
+                        message["alone"] = text
+                    emit(message)
                     continue
             if noise:
                 continue

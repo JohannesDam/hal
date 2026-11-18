@@ -69,7 +69,27 @@ export function bandFor(learn: Learn): string {
 }
 
 // No line opens on a weak vowel: the voice swallows it ("Again." came out as "gain").
-const AGAIN = ['Once more.', 'The same way. Once more.', 'Say it again.', 'One more time.']
+/** How long he listens after each of his lines: one word, or one sentence. */
+export const windowMs = (step: LearnStep) => (step === 'other' ? 8000 : 4000)
+
+/**
+ * The listening window in the band: the bar empties while he listens, and the word is said
+ * once inside it. `left`: the share of the window still open, 1 to 0.
+ */
+export function windowBand(learn: Learn, left: number): string {
+  const width = 16
+  const full = Math.max(0, Math.min(width, Math.round(left * width)))
+  const bar = `▕${'█'.repeat(full)}${'░'.repeat(width - full)}▏`
+  const what = learn.step === 'name' ? 'say "HAL" now' : learn.step === 'stop' ? 'say "stop" now' : 'say a sentence now'
+  const of = learn.step === 'name' ? NAME_TIMES : learn.step === 'stop' ? STOP_TIMES : OTHER_TIMES
+
+  return `HAL listens · ${what} ${bar} ${learn.got} of ${of}`
+}
+
+/** The window closed and nothing came. */
+export const NOTHING_HEARD = 'Nothing reached me. Once more.'
+
+const AGAIN =['Once more.', 'The same way. Once more.', 'Say it again.', 'One more time.']
 
 /** What HAL says at each step. Plain lines: no haze, not kept among his remarks. */
 export const lineFor = {

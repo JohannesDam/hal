@@ -18,7 +18,19 @@ import type { Dossier, Git, Moment, Visit } from './dossier'
 import { closing, conversationNote, IDLE_CLOSING, IDLE_END_MS, isLook, isTypedStop, presenceStrength, SEND_DELAY_MS } from './conversation'
 import { acknowledgement, addressed, hearsName, isSalient, keep, remarkFrom, shouldWeigh, tally, weighRequest } from './ears'
 import type { Heard, HeardTally, ReflectState, Source } from './ears'
-import { advance, bandFor, HOW_TO_CALL, LEARN_INTRO, learnedNote, lineFor, PRACTICE_MS, STEP_TIMEOUT_MS } from './learn'
+import {
+  advance,
+  bandFor,
+  HOW_TO_CALL,
+  LEARN_INTRO,
+  learnedNote,
+  lineFor,
+  NOTHING_HEARD,
+  PRACTICE_MS,
+  STEP_TIMEOUT_MS,
+  windowBand,
+  windowMs,
+} from './learn'
 import type { Learn, Learned } from './learn'
 import { LOOK_EVERY_MS, parseSeen, sightFacts } from './sight'
 import type { Seen } from './sight'
@@ -116,6 +128,10 @@ let lastClosing: string | undefined
 /** /hal learn in progress (learn.ts); undefined otherwise. */
 let learning: Learn | undefined
 let learnSerial = 0
+/** His last walk-through line: when it is said, the listening window opens. */
+let learnLineId: string | undefined
+let windowSerial = 0
+let windowMisses = 0
 // /hal see (sight.ts): the last two looks, as numbers. Only in this module's memory.
 let seen: Seen | undefined
 let seenBefore: Seen | undefined
@@ -359,7 +375,12 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       break
     case 'heard':
       if ((message.src === 'mic' || message.src === 'loop') && typeof message.text === 'string') {
-        await onHeard($, message.src, message.text, typeof message.sec === 'number' ? message.sec : 0, message.name === true, message.stop === true)
+        // A learned lone word ("Go!") opens a conversation; inside one it is ordinary speech.
+        if (conversation && typeof message.alone === 'string' && message.alone) {
+          await onHeard($, message.src, message.alone, typeof message.sec === 'number' ? message.sec : 0)
+        } else {
+          await onHeard($, message.src, message.text, typeof message.sec === 'number' ? message.sec : 0, message.name === true, message.stop === true)
+        }
       }
       break
     case 'learn':
@@ -381,10 +402,21 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
     case 'level':
       voiceLevel = typeof message.v === 'number' ? message.v : 0
       break
+    case 'spoken':
+      // His voice ended (the stare goes on): the ears are open again, so is the window.
+      if (learnLineId !== undefined && message.id === learnLineId) {
+        learnLineId = undefined
+        void openListenWindow($).catch(() => undefined)
+      }
+      break
     case 'done':
       isAway = false
       await setMood($, 'idle')
       lookAtYou()
+      if (learnLineId !== undefined && message.id === learnLineId) {
+        learnLineId = undefined
+        void openListenWindow($).catch(() => undefined)
+      }
       await reveal($, sayLines.get(String(message.id)))
       sayLines.delete(String(message.id))
       sayHazes.delete(String(message.id))
@@ -990,7 +1022,46 @@ async function startLearning($: $, settings: HalSettings) {
   await send($, { kind: 'learn', step: 'name' })
   await setLearning($, { step: 'name', got: 0, at: await $.clock.now() })
   lookAtYou(4000)
-  await sayPlain($, lineFor.start, 'learn')
+  windowMisses = 0
+  await sayLearnLine($, lineFor.start)
+}
+
+/** A walk-through line; the listening window opens once it is said (or at once, when silent). */
+async function sayLearnLine($: $, line: string) {
+  windowSerial += 1
+  learnLineId = await sayPlain($, line, 'learn')
+  if (!learnLineId) {
+    void openListenWindow($).catch(() => undefined)
+  }
+}
+
+/** The bar empties while he listens; the word is said once inside it. Nothing: he asks again. */
+async function openListenWindow($: $) {
+  const start = learning
+  if (!start || (start.step !== 'name' && start.step !== 'stop' && start.step !== 'other')) {
+    return
+  }
+  windowSerial += 1
+  const serial = windowSerial
+  const frames = windowMs(start.step) / 250
+  for (let i = 0; i <= frames; i++) {
+    if (serial !== windowSerial || learning !== start) {
+      return
+    }
+    await showSaid($, windowBand(start, 1 - i / frames), 0)
+    await $.clock.sleep(250)
+  }
+  if (serial !== windowSerial || learning !== start) {
+    return
+  }
+  windowMisses += 1
+  if (windowMisses > 3) {
+    // Four empty windows: the band stays, the step's own timeout ends it.
+    await showSaid($, bandFor(start), 0)
+
+    return
+  }
+  await sayLearnLine($, NOTHING_HEARD)
 }
 
 async function onLearnStep($: $, got: number) {
@@ -1003,8 +1074,10 @@ async function onLearnStep($: $, got: number) {
   }
   await setLearning($, step.next)
   lookAtYou(2500)
+  windowMisses = 0
+  windowSerial += 1
   if (step.say) {
-    await sayPlain($, step.say, 'learn')
+    await sayLearnLine($, step.say)
   }
 }
 

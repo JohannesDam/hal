@@ -156,6 +156,9 @@ class Name:
         self.threshold = 0.0
         self.stop_prints: list[np.ndarray] = []
         self.stop_threshold = 0.0
+        # Words Whisper wrote for this guest's "HAL" at least three times in five, whatever they
+        # are: they count only when said alone (is_alone_call).
+        self.alone: set[str] = set()
         self.learned = {}
         self.load()
 
@@ -171,6 +174,7 @@ class Name:
             self.stop_prints = [data[k] for k in sorted(data.files) if k.startswith("s")]
             self.threshold = float(meta["threshold"])
             self.stop_threshold = float(meta.get("stop_threshold", 0.0))
+            self.alone = {w for w in meta.get("alone", []) if isinstance(w, str) and w and not is_stop_word(w)}
             # Files from version 1 could hold any word ("oh", "go"): only name-shaped ones count.
             self.spellings = set(DEFAULT_SPELLINGS) | {w for w in meta.get("spellings", []) if is_name_shaped(w)}
             if meta.get("version", 1) < 2 and (meta.get("margin") or 0) <= 0:
@@ -179,7 +183,7 @@ class Name:
             self.learned = meta
         except (OSError, ValueError, KeyError):
             self.prints, self.threshold, self.learned = [], 0.0, {}
-            self.stop_prints, self.stop_threshold = [], 0.0
+            self.stop_prints, self.stop_threshold, self.alone = [], 0.0, set()
             self.spellings = set(DEFAULT_SPELLINGS)
 
     def forget(self) -> None:
@@ -192,6 +196,12 @@ class Name:
 
     def is_name_word(self, word: str) -> bool:
         return bool(word) and word not in NEVER and word in self.spellings
+
+    def is_alone_call(self, text: str) -> bool:
+        """The guest's own way Whisper writes their "HAL" ("Go!", "Oh" for one voice), said
+        alone. It may open a conversation, never start a command."""
+        words = re.findall(r"[^\W\d_]+", re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", text.lower()))
+        return len(words) == 1 and words[0] in self.alone
 
     def sounds_like(self, samples: np.ndarray) -> bool:
         if not self.prints or self.threshold <= 0 or len(samples) > 3 * MAX_NAME_SEC * RATE:
@@ -218,6 +228,8 @@ class Name:
             word = first_word(text)
             if self.is_name_word(word):
                 return True, rest_after_name(text)
+            if self.is_alone_call(text):
+                return True, ""
             # A lone word that Whisper did not know as a name, said like the name.
             if len(re.findall(r"[^\W\d_]+", text)) <= 1 and self.sounds_like(samples):
                 return True, ""
@@ -237,7 +249,14 @@ class Name:
         words = [first_word(t) for _, t in names]
         spellings = sorted({w for w in words if is_name_shaped(w) and words.count(w) >= 2})
         known = set(DEFAULT_SPELLINGS) | set(spellings)
-        by_spelling = [w in known and w not in NEVER for w in words]
+        # Whatever Whisper writes for this voice, as a lone word, at least twice in five: such a
+        # word only opens a conversation when said alone (is_alone_call), never starts a command.
+        lone = []
+        for _, t in names:
+            ws = re.findall(r"[^\W\d_]+", re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", t.lower()))
+            lone.append(ws[0] if len(ws) == 1 else "")
+        alone = sorted({w for w in lone if w and lone.count(w) >= 2 and w not in known and not is_stop_word(w)})
+        by_spelling = [(w in known and w not in NEVER) or (lw in alone) for w, lw in zip(words, lone)]
         clear = [(features(s), i) for i, (s, _) in enumerate(names)]
         clear = [(p, i) for p, i in clear if len(p) >= 8]
         prints = [p for p, _ in clear]
@@ -276,17 +295,14 @@ class Name:
             "threshold": round(float(threshold), 4),
             "sound": threshold > 0,
             "spellings": spellings,
+            "alone": alone,
             "caught": caught,
             "of": len(names),
             "margin": round(float(margin), 4) if margin is not None else None,
             "ok": caught >= 3,
         }
         if not meta["ok"]:
-            meta["why"] = (
-                "his name and your other words sound too alike to me"
-                if margin is not None and margin <= 0
-                else "speech recognition did not write your HAL as his name"
-            )
+            meta["why"] = "speech recognition wrote your HAL differently each time, and its sound is too close to your other words"
         # "stop": its own prints, kept apart from his name and from the ordinary sentences.
         stop_prints = [p for p in (features(s) for s, _ in stops) if len(p) >= 6]
         stop_threshold = 0.0

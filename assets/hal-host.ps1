@@ -1015,6 +1015,7 @@ $script:anim.Add_Tick({
             # His voice is done: the ears open now (with their own 300 ms tail), not after the
             # stare. A guest answers right away; two seconds of deaf staring lost their words.
             Send-Ears '{"gate": false}'
+            Emit @{ t = 'spoken'; id = $item.id }
             $S.phase = 'stare'; $S.stareStart = $t; $S.stareLength = 2.0
           }
         }
