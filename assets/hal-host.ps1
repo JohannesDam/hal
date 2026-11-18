@@ -820,15 +820,19 @@ function Start-Next {
 
 function Start-Exit([double]$t, [double]$length, [string]$event, [string]$why) {
   $S = $script:S
+  # Inside a conversation a line never takes the eye with it (too late, an error): back to holding.
+  # Only the end of the conversation ('released') or a line after it lets the eye go.
+  if ($S.presence -and $event -ne 'released') { Enter-Hold $why $event; return }
   $S.phase = 'exit'; $S.exitStart = $t; $S.exitLength = $length
   $S.exitEvent = $event; $S.exitWhy = $why
   if ($S.player -and $event -eq 'dropped') { try { $S.player.Stop() } catch { } }
 }
 
 # A line is done inside a conversation: the eye stays and holds the guest; his ears open again.
-function Enter-Hold([string]$why) {
+function Enter-Hold([string]$why, [string]$event = 'done') {
   $S = $script:S
-  $msg = @{ t = 'done'; id = $S.item.id }
+  if ($S.player -and $event -eq 'dropped') { try { $S.player.Stop() } catch { } }
+  $msg = @{ t = $event; id = $S.item.id }
   if ($why) { $msg.why = $why }
   Emit $msg
   Send-Ears '{"gate": false}'
@@ -1059,7 +1063,10 @@ $script:anim.Add_Tick({
       }
     } catch {
       Emit @{ t = 'error'; why = "$_"; at = "$($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())" }
-      try { $S.exitEvent = 'dropped'; $S.exitWhy = 'error'; Stop-Line } catch { }
+      try {
+        if ($S.presence -and $S.phase -ne 'hold') { Enter-Hold 'error' 'dropped' }
+        elseif (-not $S.presence) { $S.exitEvent = 'dropped'; $S.exitWhy = 'error'; Stop-Line }
+      } catch { }
     }
   })
 
@@ -1342,12 +1349,12 @@ function Read-Inbox {
           $script:S.presenceStrength = [double]$msg.strength
           if ($script:S.phase -ne 'idle') { foreach ($p in $script:S.windows) { Set-Strength $p $script:S.presenceStrength } }
         }
-        if ($msg.on -eq $true -and -not $script:S.presence) {
-          $script:S.presence = $true
+        if ($msg.on -eq $true) {
           # The eye comes with his first words, also when something is still playing (his last
           # line after "stop", its slow exit): then right after it. Only an eye already holding
-          # needs nothing. Before 0.6.2 this queued only when idle, so a second "please wake up"
-          # soon after "stop" opened a conversation without an eye.
+          # needs nothing. No "already on" guard: a host that believed a conversation was still
+          # open (its eye gone by a side way) ignored every new one, and the eye never came back.
+          $script:S.presence = $true
           if ($script:S.phase -ne 'hold') {
             $first = [pscustomobject]@{ kind = 'say'; id = [string]$msg.id; text = [string]$msg.text; eyeOnly = -not [bool]$msg.text; haze = $true; strength = $script:S.presenceStrength; pauseMs = 300; at = (NowMs); neverLate = $true }
             [void]$script:S.queue.Add($first)
