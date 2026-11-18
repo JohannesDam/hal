@@ -2,9 +2,13 @@
 
 An experiment: Claude Code as a calm, faintly distrustful computer at your side, and you as his guest. `/hal` wakes him. From then on Claude talks as HAL in the chat and now and then says something out loud. His eye lives in a band above your prompt: it reads along while you type, looks the way of the work while he works, and blinks when you press Enter. At real moments (an error, after midnight, a long job; at most four an hour) he comes forward: a translucent red haze creeps in from the edges of the whole screen, the eye opens toward you, he speaks, keeps staring, and withdraws.
 
+![The whole screen while HAL speaks: the haze darkens the desktop and the terminal, his eye opens in the middle, the sentence he is saying stands under it](docs/images/overlay.png)
+
 It is theatre. HAL always does the work in full, reports honestly what happened, and never takes real control of the mouse or keyboard. The haze is click-through and never takes focus.
 
 The character is inspired by the archetype of the calm, polite, unsettling ship's computer. Everything here is original: the eye is its own design (a diaphragm of seven blades around a dark heptagonal aperture with a hot vermilion rim, inside a graphite bezel with a turning dial), HAL writes his own lines rather than quoting films, and the voice is a synthetic voice, not a recording.
+
+![The eye up close: looking past you while he speaks (left), and straight at you, narrower, in the stare after his last word (right)](docs/images/eye.png)
 
 ## Commands
 
@@ -75,6 +79,10 @@ HAL keeps notes per machine (`/hal dossier`): visits, how long, reads, edits, co
 
 While HAL is awake the terminal is his: the spinner says *Watching*, *Weighing* or *Remembering*; a turn ends with "HAL · 3 s"; the hint line adds "HAL waits" or "HAL works" (and "HAL listens"); your prompts show dimmed under the time and your name, like a visitors' book; and his spoken line stays "◉ ···" in the chat until his voice has said it. Only the drawing changes, never what is stored.
 
+![The terminal after a turn: the visitor's prompt dimmed under the time, HAL's spoken line revealed, his eye on the horizon above the prompt, the hint and status lines in his words, and the eye pane on the right (/hal eye on)](docs/images/terminal.png)
+
+The pictures are rendered from the mod's own drawing code (`tools/render-pictures.ps1`): the band and the pane eye by `hooks/eye.ts`, the haze by the host's own window parts. The Claude Code layout around HAL's parts is simplified, and the window uses the "HAL" scheme below.
+
 Optionally, give Windows Terminal a profile "HAL" yourself (the mod never changes your settings). In `settings.json`, add a scheme and use it in a profile:
 
 ```json
@@ -113,13 +121,14 @@ A Bluetooth headset drops to mono "hands-free" sound while its microphone is ope
 - `assets/hal-voice.py` with `assets/hal_piper.py` and `assets/hal_kokoro.py`: the neural voice, kept warm; one request per line on stdin, one wav per answer.
 - `assets/hal-ears.py`: the ears, started by HAL's process while he listens: the microphone and the loopback (soundcard, WASAPI), a VAD per input, Whisper small for both; it reports speech starting and stopping and what was said, is gated while HAL speaks, and goes deaf while another app holds the microphone. `hooks/ears.ts`: what the mod does with it (spoken commands, overheard remarks, the tally per day).
 - `tools/setup-voice.ps1`: downloads the voice and the speech models (each checked by SHA-256) and builds the Python environment.
+- `tools/render-pictures.ps1` with `tools/render-terminal.mjs`: renders the pictures in `docs/images` from the mod's own drawing code, offscreen (Node 22.6 or newer, Microsoft Edge). Run it again when the eye or the haze changes.
 - `assets/hal.ps1`: one line from a shell, for testing: `powershell -NoProfile -STA -ExecutionPolicy Bypass -File hal.ps1 -Text "Nothing was deleted. I checked."`. When HAL's process runs, the line goes to it.
 
 - `tools/listening_test.py`: the blind listening test for the voice. It renders eight fixed lines with stock Kokoro voices, two blends of them, and the processed Windows voice, runs all of them through HAL's voice chain, and writes `%LOCALAPPDATA%\hal\listening\listening.html`, where the voices are only letters. Setup: Kokoro multi-lang v1.0 from the [sherpa-onnx TTS models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models) under `%LOCALAPPDATA%\hal\models\kokoro`, and a venv with `pip install sherpa-onnx numpy` at `%LOCALAPPDATA%\hal\venv`.
 
-Tests: `claude plugin test .` runs `hooks/hal.test.tsx`.
+Tests: `claude plugin test .` runs `hooks/hal.test.tsx` and `hooks/units.test.ts`.
 
 ## Next
 
-- The dossier, the reception and the farewell (plan step 6); the terminal as HAL's house (step 7); initiative and the edge glow (step 8).
+- A week of daily use on a laptop (plan step 9).
 - The design team's plan for v0.2: [docs/plan-v0.2.md](docs/plan-v0.2.md); where it stands and what is open: [docs/status-v0.2.md](docs/status-v0.2.md).
