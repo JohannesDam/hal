@@ -192,7 +192,7 @@ public sealed class HalVoice {
     int r = Rate, L = (int)(lead * r), T = (int)(tail * r), F = (int)(0.2 * r);
     int n = L + Samples.Length + T + F;
     short[] buf = new short[n * 2];
-    double amp = 0.022, nl = 0, nr = 0;
+    double amp = 0.035, nl = 0, nr = 0;
     Random rnd = new Random(11);
     for (int i = 0; i < n; i++) {
       double t = (double)i / r, env;
@@ -278,7 +278,7 @@ public sealed class HalVoice {
       if (v > 0.005) { sum += y[i] * y[i]; n++; }
     }
     double rms = n > 0 ? Math.Sqrt(sum / n) : 0.1;
-    double scale = 0.1 / Math.Max(rms, 1e-6);
+    double scale = 0.16 / Math.Max(rms, 1e-6);
     if (peak * scale > 0.89) scale = 0.89 / peak;
     for (int i = 0; i < y.Length; i++) y[i] *= scale;
   }
@@ -698,7 +698,7 @@ function Set-Layout($p) {
   [System.Windows.Controls.Canvas]::SetTop($p.Spark, $cy - 20)
   $p.hazeBrush.Center = New-Object System.Windows.Point ($cx, $cy)
   $p.hazeBrush.GradientOrigin = $p.hazeBrush.Center
-  $p.hazeBrush.RadiusX = [Math]::Max($w, $h) * 0.75; $p.hazeBrush.RadiusY = $p.hazeBrush.RadiusX
+  $p.hazeBrush.RadiusX = 0.71 * $w; $p.hazeBrush.RadiusY = 0.71 * $h
   $lw = [Math]::Min(1100.0, $w * 0.8)
   $p.Line.Width = $lw
   [System.Windows.Controls.Canvas]::SetLeft($p.Line, $cx - $lw / 2)
@@ -740,9 +740,9 @@ function Get-Windows {
 # ---------- the loop ----------
 # One line runs through four phases:
 #   enter  the haze creeps in from the edges, a point of light, the iris opens toward you;
-#          the voice never starts before 1.4 s, plus the pause the mod asked for
+#          the voice never starts before 2.0 s, plus the pause the mod asked for
 #   speak  the voice; typing now clears the centre and shrinks the eye, the sentence ends
-#   stare  1.2 s of staring after the last word
+#   stare  2 s of staring after the last word (3 s for the wordless eye)
 #   exit   1.8 s: the iris closes, the centre clears first, the edges last, a red point fades
 # Typing before the first word drops the line and leaves in 0.3 s.
 $script:S = @{
@@ -751,7 +751,7 @@ $script:S = @{
   clock = [Diagnostics.Stopwatch]::StartNew(); t0 = 0.0
   task = $null; voice = $null; player = $null; voiceReadyT = $null
   isHaze = $false; isEyeOnly = $false; pause = 0.0
-  speakAt = $null; speakStart = 0.0; stareStart = 0.0; stareLength = 1.2
+  speakAt = $null; speakStart = 0.0; stareStart = 0.0; stareLength = 2.0
   exitStart = 0.0; exitLength = 1.8; exitEvent = 'done'; exitWhy = ''
   interruptedAt = $null; lastLevelAt = 0.0; vis = $null
   gaze = @{ x = 0.0; y = 0.0; nx = 0.0; ny = 0.0; dartUntil = 0.0; nextDart = 0.0; dx = 0.0; dy = 0.0 }
@@ -846,7 +846,7 @@ function Get-Visual([double]$t, [double]$fast) {
       $v.mode = 'atYou'
     }
     'speak' {
-      $v.open = 0.55 + 0.08 * $fast
+      $v.open = 0.4   # held: only the rim follows the voice
       $v.line = 0.85 * (& $clamp (($t - $S.speakStart) / 0.8))
       if ($null -ne $S.interruptedAt) {
         $k = & $clamp (($t - $S.interruptedAt) / 0.3)
@@ -891,7 +891,7 @@ function Update-Eye([double]$t, [double]$fast, [double]$slow, $v) {
       $ang = $rnd.NextDouble() * 2 * [Math]::PI; $reach = 0.5 + 0.4 * $rnd.NextDouble()
       $gz.dx = [Math]::Cos($ang) * $reach; $gz.dy = [Math]::Sin($ang) * $reach * 0.6
       $gz.dartUntil = $t + 0.3 + 0.2 * $rnd.NextDouble()
-      $gz.nextDart = $t + 1.5 + 1.5 * $rnd.NextDouble()
+      $gz.nextDart = $t + 3.0 + 3.0 * $rnd.NextDouble()
     }
     if ($t -lt $gz.dartUntil) { $tx = $gz.dx; $ty = $gz.dy }
   }
@@ -946,13 +946,14 @@ $script:anim.Add_Tick({
               $S.voice = $result.voice
               $S.voiceReadyT = $t
               $S.lastSynthMs = (NowMs) - $S.synthStartMs
-              if ($S.voice -and $S.isHaze) { $S.wav = $S.voice.WithHouseTone(0.8, 0.8); $S.lead = 0.8 }
+              if ($S.voice -and $S.isHaze) { $S.wav = $S.voice.WithHouseTone(0.8, 0.5); $S.lead = 0.8 }
               elseif ($S.voice) { $S.wav = $S.voice.Wav; $S.lead = 0.0 }
             }
           }
           $isReady = $S.isEyeOnly -or (-not $S.job) -or ($null -ne $S.voiceReadyT)
           if ($isReady -and $null -eq $S.speakAt) {
-            $minT = 0.0; if ($S.isHaze) { $minT = 1.4 }
+            # The iris is open at 1.4 s; he looks for 0.6 s more before the first word.
+            $minT = 0.0; if ($S.isHaze) { $minT = 2.0 }
             $readyT = $t; if ($null -ne $S.voiceReadyT) { $readyT = $S.voiceReadyT }
             $S.speakAt = [Math]::Max($minT, $readyT) + $S.pause
           }
@@ -965,7 +966,7 @@ $script:anim.Add_Tick({
             $S.isPlayed = $true
           }
           if ($null -ne $S.speakAt -and $t -ge $S.speakAt) {
-            if ($S.isEyeOnly) { $S.phase = 'stare'; $S.stareStart = $t; $S.stareLength = 1.6; break }
+            if ($S.isEyeOnly) { $S.phase = 'stare'; $S.stareStart = $t; $S.stareLength = 3.0; break }
             if ($S.voice) { $S.lastLatencyMs = (NowMs) + [int](1000 * [HalVoice]::Preroll) - [int64]$item.at }
             $S.speakStart = $t; $S.lastLevelAt = 0.0
             Emit @{ t = 'speaking'; id = $item.id; latencyMs = $S.lastLatencyMs }
@@ -987,7 +988,7 @@ $script:anim.Add_Tick({
           if ($u -ge $seconds) {
             Emit @{ t = 'level'; v = 0 }
             if ($null -ne $S.interruptedAt) { Start-Exit $t 0.3 'done' 'interrupted' }
-            else { $S.phase = 'stare'; $S.stareStart = $t; $S.stareLength = 1.2 }
+            else { $S.phase = 'stare'; $S.stareStart = $t; $S.stareLength = 2.0 }
           }
         }
         'stare' {

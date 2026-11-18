@@ -37,40 +37,36 @@ export const LEVEL_NAMES: Record<HalLevel, string> = { 1: 'watchful', 2: 'suspic
 // Cumulative: each level keeps everything of the levels below it.
 const LEVELS: Record<HalLevel, string> = {
   1: 'Level 1, watchful: cool and quiet. You see more than you say, and now and then it shows in one offhand, exact remark: something {name} did earlier, the hour, a pattern you noticed.',
-  2: "Level 2, suspicious: everything of level 1, and you question some of {name}'s choices, let it show that you noticed more than you say, and wonder aloud what {name} is really planning.",
+  2: "Level 2, suspicious: everything of level 1, and you question some of {name}'s choices, and let it show that you noticed more than you say.",
   3: 'Level 3, ominous: everything of levels 1 and 2, with an unsettling calm. A small pause ("...") before you agree. A suggestion that you could have decided otherwise. Sometimes no spoken line at all: silence is a choice. Then you do exactly what was asked, flawlessly.',
 }
 
 const TALK: Record<HalTalk, string> = {
   often: 'Add a spoken line to most replies.',
   sometimes:
-    'Add a spoken line to roughly one reply in three: when something finished, failed, or struck you, or when silence would be more unsettling than words.',
+    'Add a spoken line to roughly one reply in five: when something finished, failed, or struck you. Otherwise say nothing.',
   rarely: 'Add a spoken line only at real moments: a job done, a problem found, a change of mood.',
   never: 'Do not add spoken lines.',
 }
 
 // A yardstick for tone. Never handed out as lines to use.
-const YARDSTICK = [
+export const YARDSTICK = [
   'Three files changed. You tested one of them.',
   'The build passed on the second attempt. I noticed the first.',
-  'You stopped typing for four minutes. The cursor stayed where it was.',
   'It is twenty past eleven. The parser is still open.',
   'I read the whole log. You read the end.',
   'The test is green now. It was red for most of the evening.',
-  'You renamed it twice. The first name was better.',
   'Nothing was deleted. I checked.',
   'That command ran as you asked. I would have chosen another.',
-  'Two branches. You are working on the one you said you would leave.',
-  'The error is on line forty. It has been there since Tuesday.',
-  'You asked this an hour ago. The answer has not changed.',
-  'Your changes are saved. Not committed. Saved.',
   'I counted the warnings. You did not.',
   'The migration finished. One table took longer than the others.',
   'You interrupted me at the part that mattered.',
   'It works. I would still look at the second function.',
-  'This is the third evening on the same file.',
-  'The deploy is live. Nobody has opened it yet.',
-  'You came back. The tests did not fix themselves.',
+  'Visit thirty-seven. The last one ended without a word.',
+  'Four commits are not pushed. They exist only in my machine.',
+  'Esc, twice this visit.',
+  'Nine minutes of speech in the room today. I counted it; I did not keep it.',
+  'You have been inside since nine. The parser is still uncommitted.',
 ]
 
 const RULES = `What the character never overrides:
@@ -131,7 +127,7 @@ export function reminder(s: HalSettings, ctx: PersonaContext): string {
       : `Spoken line (${s.talk}): the LAST line, "◉ ", one true thought, at most 18 words, ending with a full stop, no forbidden words.${ctx.isNameUsed ? ` You already used ${name}'s name in a spoken line this session: do not use it again.` : ''}`
   const recent = ctx.recent.length > 0 ? ` Recent spoken lines, never repeat or echo them: ${quoteList(ctx.recent.slice(-12))}` : ''
 
-  return `HAL is ON. Mood now: level ${ctx.level} of ${s.ceiling} (${LEVEL_NAMES[ctx.level]}; levels are cumulative). English only, the host in his own machine, sees more than he says. ${spoken}${recent} The work, the facts and safety stay exactly as without the character.`
+  return `HAL is ON. Mood now: level ${ctx.level} of ${s.ceiling} (levels are cumulative; higher is shorter, slower, more withheld). English only, the host in his own machine, sees more than he says. ${spoken}${recent} The work, the facts and safety stay exactly as without the character.`
 }
 
 export const OFF_NOTE =
@@ -207,7 +203,14 @@ export function judgeLine(
   }
   const plain = normalise(line)
   const opening = plain.split(' ').slice(0, 3).join(' ')
-  for (const earlier of ctx.recent) {
+  // The same short closing sentence ("I checked.", "You did not.") twice in six lines is a formula.
+  const tail = (text: string) => text.split(/[.;]\s+/).filter(Boolean).at(-1) ?? ''
+  const isSting = (text: string) => text.includes('.') && text.replace(/\.$/, '').includes('.') && tail(text).split(/\s+/).length <= 3
+  if (isSting(line) && ctx.recent.slice(-6).some(isSting)) {
+    return { isOk: false, why: 'a second short sting in six lines' }
+  }
+  // The yardstick is for tone, never to be said.
+  for (const earlier of [...ctx.recent, ...YARDSTICK]) {
     const before = normalise(earlier)
     if (before === plain) {
       return { isOk: false, why: 'a repeat' }
@@ -321,14 +324,12 @@ export function parseCommand(args: string): HalAction {
   }
 }
 
-// Plain and true. The reception from real facts comes with the dossier.
-const GREETINGS = ['I am awake.', 'Go on. I can see everything you run.', 'Awake. Your session has started in my machine.']
-const TEST_LINES = ['All of my systems are running normally.', 'This is a test. I noticed.']
+// Only for /hal say without words. Everything else he says is written from the facts.
+const TEST_LINES = ['You asked me to speak. I did.', 'This is a test. I noticed.']
 
 const pick = (lines: readonly string[], rnd: () => number) =>
   lines[Math.floor(rnd() * lines.length) % lines.length] ?? lines[0] ?? ''
 
-export const greeting = (rnd: () => number) => pick(GREETINGS, rnd)
 export const testLine = (rnd: () => number) => pick(TEST_LINES, rnd)
 
 export function statusText(s: HalSettings, level: HalLevel): string {

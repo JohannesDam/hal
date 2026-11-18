@@ -48,3 +48,5 @@ A Claude Code mod (function hooks) that gives Claude a character: a calm, faintl
 - HAL's own haze is a maximised topmost window, which `SHQueryUserNotificationState` reports as fullscreen: the host does not read the desk while HAL is on screen.
 - In tests `$.store` is not reachable from the test's `$`: seed it with `mock.store(on, entries)` and read results through the mod's own commands (`/hal dossier`).
 - A test's `$` needs answers for every engine call the mod makes: `session.id`, `model.complete`, `process.run` (git status), `fs.write`.
+- Settings live in `$.store`, shared by every session on the machine; the atom is per session. The store is the truth: `followStore` brings a session in line, and `/hal off` always sends `quit`.
+- Saving a file in `hooks/` reloads the mod in every session that has it loaded; the reloads race for HAL's process. Do not develop in a session while the owner tests HAL in another.

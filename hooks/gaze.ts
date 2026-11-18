@@ -50,7 +50,7 @@ export const newGazeState = (): GazeState => ({
   wanderX: 0,
   wanderY: 0,
   wanderUntil: 0,
-  nextWander: 8000,
+  nextWander: 40000,
 })
 
 // 6% of the iris radius toward the upper left: past you.
@@ -94,7 +94,8 @@ export function targetOf(a: Attention, g: GazeState): Target {
   if (a.mood === 'speaking') {
     const dart = a.now < g.dartUntil
 
-    return { x: dart ? g.dartX : PAST.x, y: dart ? g.dartY : PAST.y, open: 0.55 + 0.08 * a.voice, isAtYou: false, isBlinking: false }
+    // The aperture holds while he speaks: only the rim follows the voice (lookFrom), never a mouth.
+    return { x: dart ? g.dartX : PAST.x, y: dart ? g.dartY : PAST.y, open: 0.4, isAtYou: false, isBlinking: false }
   }
   if (a.now - a.toolAt < 650) {
     const d = TOOL[a.toolKind]
@@ -125,14 +126,14 @@ export function stepGazeState(g: GazeState, a: Attention, rnd: () => number): Ga
     next.dartX = Math.cos(angle) * reach
     next.dartY = Math.sin(angle) * reach * 0.6
     next.dartUntil = a.now + 300 + 200 * rnd()
-    next.nextDart = a.now + 1500 + 1500 * rnd()
+    next.nextDart = a.now + 3000 + 3000 * rnd()
   }
   if (a.mood === 'idle' && !a.isHearing && a.now >= g.nextWander) {
     const angle = rnd() * Math.PI * 2
     next.wanderX = Math.cos(angle) * 0.8
     next.wanderY = Math.sin(angle) * 0.5
     next.wanderUntil = a.now + 1200
-    next.nextWander = a.now + 8000 + 7000 * rnd()
+    next.nextWander = a.now + 40000 + 30000 * rnd()
   }
   const target = targetOf(a, next)
   next.x += (target.x - next.x) * 0.6

@@ -24,6 +24,13 @@ try {
   if (-not (Test-Path -LiteralPath $Wav)) { exit 0 }
   $bytes = [IO.File]::ReadAllBytes($Wav)
   Remove-Item -LiteralPath $Wav -Force -ErrorAction SilentlyContinue
+
+  # Never into a call: when any app holds a microphone now, the last word stays unsaid.
+  $store = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone'
+  foreach ($key in @(Get-ChildItem -LiteralPath $store -ErrorAction SilentlyContinue) + @(Get-ChildItem -LiteralPath "$store\NonPackaged" -ErrorAction SilentlyContinue)) {
+    $app = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction SilentlyContinue
+    if ($app -and $app.LastUsedTimeStart -and $app.LastUsedTimeStop -eq 0) { exit 0 }
+  }
   if ($bytes.Length -lt 48) { exit 0 }
 
   # The length from the header: 16-bit PCM, its rate and channels.

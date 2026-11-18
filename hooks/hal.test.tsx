@@ -137,8 +137,8 @@ test('at most four full hazes an hour', async ($: any, on: any) => {
     'Long jobs leave long silences.',
   ]
   for (const [i, text] of lines.entries()) {
-    // a job of more than two minutes is a real moment
-    await $.turn.complete({ answer: `Done.\n\n◉ ${text}`, reason: 'answer', durationMs: 180_000, isAborted: false, turnId: `long-${i}` })
+    // a job of more than five minutes is a real moment
+    await $.turn.complete({ answer: `Done.\n\n◉ ${text}`, reason: 'answer', durationMs: 360_000, isAborted: false, turnId: `long-${i}` })
     await settle()
   }
   const hazes = sent.filter(m => m.kind === 'say' && m.haze === true)

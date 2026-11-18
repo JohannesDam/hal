@@ -77,6 +77,9 @@ let hasSentPersona = false
 let moodScore = 2
 let isNameUsed = false
 let hadFailureThisTurn = false
+/** The turn's last tool call failed: an error that stayed an error. */
+let lastToolFailed = false
+let hadForcePushThisTurn = false
 let recent: string[] = []
 let hazeTimes: number[] = []
 let utcOffsetMinutes: number | undefined
@@ -123,6 +126,10 @@ let isDetailUsed = false
 const pendingLines = new Set<string>()
 const revealedLines = new Set<string>()
 const sayLines = new Map<string, string>()
+/** The say messages that took a full haze: one dropped by typing gives it back to the budget. */
+const sayHazes = new Set<string>()
+/** The reception line on its way: the day counts as received once it was heard. */
+let receptionSay: { id: string; line: string; tries: number } | undefined
 /** When each prompt was sent, for the visitor log: rendering only, never the text. */
 const promptTimes = new Map<string, string>()
 
@@ -348,6 +355,11 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       lookAtYou()
       await reveal($, sayLines.get(String(message.id)))
       sayLines.delete(String(message.id))
+      sayHazes.delete(String(message.id))
+      if (receptionSay?.id === message.id) {
+        receptionSay = undefined
+        await markReceived($)
+      }
       if (message.why === 'interrupted') {
         await touch($, v => ({ ...v, interrupted: v.interrupted + 1 }))
       }
@@ -359,6 +371,14 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       sayLines.delete(String(message.id))
       if (String(message.why).startsWith('typing')) {
         await touch($, v => ({ ...v, interrupted: v.interrupted + 1 }))
+        // Typed away before the first word: that haze was never seen.
+        if (sayHazes.delete(String(message.id))) {
+          hazeTimes = hazeTimes.slice(0, -1)
+          await $.store.set('hazeTimes', hazeTimes)
+        }
+      }
+      if (receptionSay?.id === message.id) {
+        void retryReception($).catch(() => undefined)
       }
       $.ui.log(`hal: a line was dropped (${String(message.why)})`, { to: 'debug' })
       break
@@ -417,7 +437,7 @@ async function runHost($: $) {
     isAway = false
     if (isBusy) {
       lastBusyAt = await $.clock.now()
-    } else if (hostRestarts < 1 && (await read($, settingsAtom)).isOn) {
+    } else if (hostRestarts < 1 && migrate(await $.store.get('settings')).isOn) {
       // One restart; after that HAL stays silent.
       hostRestarts += 1
       startHost($)
@@ -618,26 +638,64 @@ async function receive($: $, kind: 'full' | 'look') {
     return
   }
   const line = await ownLine($, 'reception')
-  dossier = { ...dossier, receptionDay: localDay(await $.clock.now(), utcOffsetMinutes ?? 0) }
-  if (line) {
-    // The switch-offs were named, once.
-    dossier = { ...dossier, offsSinceReception: [] }
-    await remember($, line, settings)
-    notes.push(`HAL received the guest aloud at the start of this visit: "${line}". Do not repeat it.`)
-    await speak($, line, settings, 'moment', false)
+  if (!line) {
+    await markReceived($)
+
+    return
   }
+  await remember($, line, settings)
+  notes.push(`HAL received the guest aloud at the start of this visit: "${line}". Do not repeat it.`)
+  const id = await speak($, line, settings, 'moment', false)
+  if (id) {
+    receptionSay = { id, line, tries: 1 }
+  } else {
+    await markReceived($)
+  }
+}
+
+/** The day counts as received, and the switch-offs as named, once the reception was heard. */
+async function markReceived($: $) {
+  if (!dossier) {
+    return
+  }
+  dossier = { ...dossier, receptionDay: localDay(await $.clock.now(), utcOffsetMinutes ?? 0), offsSinceReception: [] }
   await saveDossier($)
 }
 
+/** Typed away: once more at the next quiet moment (five seconds without a key, within ten minutes). */
+async function retryReception($: $) {
+  const pending = receptionSay
+  receptionSay = undefined
+  if (!pending || pending.tries >= 2) {
+    await markReceived($)
+
+    return
+  }
+  for (let waited = 0; waited < 10 * 60_000; waited += 2000) {
+    await $.clock.sleep(2000)
+    if (clock - lastEditAt > 5000 && mood === 'idle') {
+      const settings = await read($, settingsAtom)
+      const id = settings.isOn ? await speak($, pending.line, settings, 'moment', false) : undefined
+      if (id) {
+        receptionSay = { ...pending, id, tries: pending.tries + 1 }
+
+        return
+      }
+      break
+    }
+  }
+  await markReceived($)
+}
+
 /**
- * The farewell, rendered ahead after twenty minutes and again at most every ten: HAL's process
+ * The farewell, rendered ahead after twenty minutes and again at most every three: HAL's process
  * keeps it as a wav, and a waiter outside Claude Code plays it after Claude Code has ended.
  */
 async function prepareFarewell($: $) {
   const settings = await read($, settingsAtom)
   const visit = currentVisit()
   const now = await $.clock.now()
-  if (!visit || isFarewellBusy || !isHostOwner || settings.talk === 'never' || now - visit.start < 20 * 60_000 || now - farewellAt < 10 * 60_000) {
+  if (!visit || isFarewellBusy || !isHostOwner || settings.talk === 'never' || now - visit.start < 20 * 60_000 || now - farewellAt < 3 * 60_000) {
     return
   }
   isFarewellBusy = true
@@ -655,7 +713,7 @@ async function prepareFarewell($: $) {
 
 /** Once a minute: is something true enough to say unprompted? Never more than once per 45 minutes. */
 async function checkInitiative($: $) {
-  const settings = await read($, settingsAtom)
+  const settings = await followStore($)
   const now = await $.clock.now()
   if (!settings.isOn || settings.talk === 'never' || !isHostOwner || mood !== 'idle') {
     return
@@ -682,7 +740,7 @@ async function checkInitiative($: $) {
   }
   await remember($, line, settings)
   notes.push(`HAL said aloud, unprompted, because ${found.why}: "${line}". Do not repeat it.`)
-  await speak($, line, settings, 'moment', (await currentLevel($, settings)) === 3)
+  await speak($, line, settings, 'moment', false)
 }
 
 function startWatch($: $) {
@@ -802,7 +860,7 @@ async function weigh($: $) {
     await $.store.set('remarks', reflect.remarks)
     await remember($, line, settings)
     notes.push(`HAL overheard speech (the room or the computer) and said aloud, unprompted: "${line}". Do not repeat it.`)
-    await speak($, line, settings, 'moment', level === 3)
+    await speak($, line, settings, 'moment', false)
   } finally {
     isWeighing = false
   }
@@ -817,12 +875,17 @@ type Weight =
   | 'line'
 
 /** HAL speaks: the line goes to HAL's process, which speaks it and, at real moments, lays the haze. */
-async function speak($: $, text: string, settings: HalSettings, weight: Weight, isUncomfortable: boolean): Promise<boolean> {
+/**
+ * HAL speaks: the line goes to HAL's process. Returns the message id, or undefined when he
+ * may not speak aloud now. `isUncomfortable`: two to three seconds of looking before the
+ * first word; at level 3 he always waits a little.
+ */
+async function speak($: $, text: string, settings: HalSettings, weight: Weight, isUncomfortable: boolean): Promise<string | undefined> {
   // Another app holds the microphone (a call): HAL does not speak aloud over it.
   if (desk.micBusy && weight !== 'test') {
     $.ui.log('hal: kept silent, another app holds the microphone', { to: 'debug' })
 
-    return false
+    return undefined
   }
   const level = await currentLevel($, settings)
   let haze = false
@@ -831,21 +894,25 @@ async function speak($: $, text: string, settings: HalSettings, weight: Weight, 
   }
   await update($, lineAtom, () => text)
   await ensureHost($)
-  if (/\d|\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|hundred)\b/i.test(text)) {
+  if (/\d|\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|hundred)\b/i.test(text)) {
     isDetailUsed = true
   }
   await touch($, v => ({ ...v, spoken: v.spoken + 1 }))
   messageCount += 1
   const id = `say-${messageCount}`
   sayLines.set(id, text)
+  if (haze) {
+    sayHazes.add(id)
+  }
   await send($, {
     kind: 'say',
     id,
     text: speakable(text),
     haze,
     strength: 0.4 + 0.08 * level,
-    // Short for routine; two to three seconds of staring before something uncomfortable.
-    pauseMs: isUncomfortable ? 2000 + Math.round(1000 * Math.random()) : 300,
+    // The silence before the first word follows the content and the mood: two to three
+    // seconds before something uncomfortable, a little at level 3, short for routine.
+    pauseMs: isUncomfortable ? 2000 + Math.round(1000 * Math.random()) : level === 3 ? 1200 : 300,
   })
   // Whatever happens to the voice, the chat shows the line within half a minute.
   void (async () => {
@@ -853,7 +920,7 @@ async function speak($: $, text: string, settings: HalSettings, weight: Weight, 
     await reveal($, text)
   })().catch(() => undefined)
 
-  return true
+  return id
 }
 
 /** Rarely, at level 3: only the eye comes, looks, and goes. Not a word. */
@@ -925,11 +992,34 @@ async function sleep($: $) {
   heard = []
   await send($, { kind: 'farewell-cancel' })
   await send($, { kind: 'glow', on: false })
-  if (isHostOwner) {
-    await send($, { kind: 'quit' })
-  } else {
-    await send($, { kind: 'ears', on: false })
+  // Off is off in every session: the one process goes, whoever owns it.
+  await send($, { kind: 'quit' })
+}
+
+/**
+ * The stored settings are shared by every session on this machine: when another session
+ * switched HAL on or off, this one follows (at its next prompt, or within a minute).
+ */
+async function followStore($: $): Promise<HalSettings> {
+  const current = await read($, settingsAtom)
+  const stored = migrate(await $.store.get('settings'))
+  if (stored.isOn === current.isOn) {
+    return current
   }
+  const next = { ...stored, name: stored.name || current.name }
+  await update($, settingsAtom, () => next)
+  if (!next.isOn) {
+    $.ui.status(undefined)
+    stopEye()
+    stopWatch()
+    hearing = { mic: false, loop: false }
+    heard = []
+    hasSentPersona = false
+  } else {
+    await wake($, next, false)
+  }
+
+  return next
 }
 
 async function context($: $, settings: HalSettings) {
@@ -1128,6 +1218,11 @@ export const register: Register = on => {
   // prompt as hidden context: whole once per conversation, then a short note with the mood.
   on('prompt.submit', async ($, e, next) => {
     submitAt = clock // Enter is a blink
+    const wasOn = (await read($, settingsAtom)).isOn
+    if (wasOn !== (await followStore($)).isOn && wasOn && !e.command) {
+      // Switched off elsewhere: tell the model once, as /hal off does.
+      return next({ ...e, context: [...(e.context ?? []), OFF_NOTE] })
+    }
     const extra: string[] = []
     if (spokenPrompt !== undefined && e.text === spokenPrompt) {
       spokenPrompt = undefined
@@ -1190,6 +1285,7 @@ export const register: Register = on => {
       failures: v.failures + (isFailure ? 1 : 0),
     }))
     watch = { ...watch, lastActivityAt: now, ...(isFailure ? { lastErrorAt: now } : {}) }
+    lastToolFailed = isFailure
     if (e.tool === 'Bash' || e.tool === 'PowerShell') {
       const key = testKey(String(e.command))
       if (key) {
@@ -1202,6 +1298,7 @@ export const register: Register = on => {
       await shiftMood($, 'failure')
     }
     if (e.tool === 'Bash' && isForcePush(e.command)) {
+      hadForcePushThisTurn = true
       await shiftMood($, 'forcePush')
     }
     await showStatus($)
@@ -1213,6 +1310,8 @@ export const register: Register = on => {
     const started = await next(e)
     if (e.agentId === undefined) {
       hadFailureThisTurn = false
+      lastToolFailed = false
+      hadForcePushThisTurn = false
       const settings = await read($, settingsAtom)
       if (settings.isOn) {
         // The edge glow: the house works while you wait (decision 3).
@@ -1249,6 +1348,10 @@ export const register: Register = on => {
       .catch(() => undefined)
     if (e.reason === 'aborted') {
       await shiftMood($, 'abort')
+      // Cut off at level 3: he says nothing; only the eye comes, holds, and goes. Typing ends it.
+      if ((await currentLevel($, settings)) === 3 && settings.haze) {
+        await stare($, settings)
+      }
       await touch($, v => ({ ...v, escapes: v.escapes + 1 }))
       const escapes = currentVisit()?.escapes ?? 1
       notes.push(
@@ -1284,16 +1387,18 @@ export const register: Register = on => {
     }
     if (!line || !verdict?.isOk) {
       await reveal($, held)
-      if (level === 3 && settings.haze && Math.random() < 0.12) {
+      // A force push at level 3 and no words: only the eye.
+      if (level === 3 && settings.haze && hadForcePushThisTurn) {
         await stare($, settings)
       }
 
       return done
     }
-    // A real moment gets the full haze: an error, after midnight, a job of more than two minutes.
-    const isMoment = hadFailureThisTurn || hour < 5 || e.durationMs > 120_000
+    // A real moment gets the full haze: an error that stayed an error, after midnight, a job of
+    // more than five minutes. A grep that found nothing on the way is not a scene.
+    const isMoment = lastToolFailed || hour < 5 || e.durationMs > 300_000
     await remember($, line, settings)
-    if (!(await speak($, line, settings, isMoment ? 'moment' : 'line', hadFailureThisTurn || level === 3))) {
+    if (!(await speak($, line, settings, isMoment ? 'moment' : 'line', lastToolFailed))) {
       await reveal($, held)
     }
 
@@ -1419,7 +1524,7 @@ export const register: Register = on => {
     const width = e.props.bodyColumns
     const columns = Math.max(14, Math.min(40, width - 2))
     const rows = Math.ceil(columns / 2)
-    const state = { idle: 'listening', working: 'thinking', speaking: 'speaking' }[now]
+    const state = { idle: settings.listen ? 'listening' : 'waiting', working: 'thinking', speaking: 'speaking' }[now]
     const marks = '●'.repeat(level) + '○'.repeat(Math.max(0, settings.ceiling - level))
 
     if (e.surface === 'terminal') {

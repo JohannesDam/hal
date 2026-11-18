@@ -184,7 +184,7 @@ export function factBlock(d: Dossier, m: Moment): string[] {
   const facts = [
     `Local time ${localTime(m.now, m.offsetMinutes)}.`,
     `Visit ${d.visits} to this machine; inside since ${localTime(visit.start, m.offsetMinutes)} (${gap(m.now - visit.start)}).`,
-    `This visit: ${visit.reads} reads, ${visit.writes} edits, ${visit.commands} commands, ${visit.failures} failed tool calls, ${visit.escapes} times Esc, ${visit.interrupted} times interrupted while HAL spoke.`,
+    `This visit: ${visit.reads} reads, ${visit.writes} edits, ${visit.commands} commands, ${visit.failures} failed tool calls (done by HAL in his machine, at the guest's request); the guest pressed Esc ${visit.escapes} times and a key ${visit.interrupted} times while HAL spoke.`,
   ]
   if (m.project) {
     facts.push(`The guest's folder: "${m.project}".`)
@@ -225,15 +225,16 @@ export function describeDossier(d: Dossier, m: Moment): string {
 export type Reception = 'full' | 'look'
 
 /**
- * The first visit of the day is received with the full haze; back within the hour, or later
- * the same day, only the band's eye looks up.
+ * The first visit of the day is received with the full haze; later the same day, or back
+ * within the hour (also just past midnight), only the band's eye looks up.
  */
 export function receptionKind(d: Dossier, now: number, offsetMinutes: number): Reception {
-  if (d.receptionDay !== localDay(now, offsetMinutes)) {
-    return 'full'
+  const lastSeen = Math.max(d.previous?.last ?? -Infinity, ...Object.values(d.open).map(v => v.last))
+  if (now - lastSeen < 60 * 60_000) {
+    return 'look'
   }
 
-  return 'look'
+  return d.receptionDay !== localDay(now, offsetMinutes) ? 'full' : 'look'
 }
 
 /** The bookkeeping in the status line: right, and that is what is uncomfortable. */

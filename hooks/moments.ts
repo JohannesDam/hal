@@ -5,13 +5,13 @@ export type Occasion = 'reception' | 'woken' | 'initiative' | 'farewell'
 
 const OCCASION: Record<Occasion, string> = {
   reception:
-    'The guest has just arrived: the first visit of the day. Receive them with one line of bare facts from the list: how long since the previous visit, what lies uncommitted, how the previous visit ended. No greeting word, no welcome, no comfort.',
+    'The guest has just arrived: the first visit of the day. Receive them with the one fact from the list that matters most, two at most (how long they were away, what lies uncommitted, how the previous visit ended). Choose; never list them all. No greeting word, no welcome, no comfort.',
   woken:
     'The guest has just woken you with /hal. One line from the facts: what you see in your machine right now. No greeting word, no welcome.',
   initiative:
     'Nobody asked you anything. This is true right now: {why}. Say one remark about it, from the facts, or answer SILENCE if nothing true and sharp can be said.',
   farewell:
-    'The guest will leave soon after a long visit. Write your last word now; it is spoken after they have gone: one sentence about what was left open (uncommitted work, a failure, the hour). No goodbye word.',
+    'The guest will leave soon after a long visit. Write your last word now; it is spoken after they have gone and cut off after five seconds: one sentence of at most ten words about what was left open (uncommitted work, a failure, the hour). No goodbye word.',
 }
 
 /** The request for one of HAL's own lines; the answer is the line, or SILENCE. */

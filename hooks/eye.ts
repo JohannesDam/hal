@@ -168,7 +168,8 @@ export function bandCells(columns: number, look: Look, isAway: boolean, isDeaf =
   const h = rows * 2
   const words = new Uint32Array(columns * rows * 3)
   const cx = (columns - 1) / 2
-  const ex = cx + Math.max(-1, Math.min(1, look.gx)) * Math.min(12, columns * 0.12)
+  // The eye stays centred on the horizon; the gaze moves the aperture inside it, never the eye along the line.
+  const ex = cx + Math.max(-1, Math.min(1, look.gx)) * Math.min(2, columns * 0.02)
   const ey = (h - 1) / 2
   const ra = 0.18 + 0.28 * Math.max(0.1, Math.min(1, look.open))
 

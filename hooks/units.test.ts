@@ -75,10 +75,13 @@ test('the fact block names only what was counted', async () => {
   expect(facts[2]).toContain('4 reads, 0 edits, 2 commands, 1 failed tool calls')
 })
 
-test('the reception: full on the first visit of the day, a look after that', async () => {
+test('the reception: full on the first visit of the day, a look after that or within the hour', async () => {
   const d = readDossier(undefined, T0)
   expect(receptionKind(d, T0, 60)).toBe('full')
   expect(receptionKind({ ...d, receptionDay: '2026-11-17' }, T0, 60)).toBe('look')
+  // Ten minutes after midnight, back from a visit that ended at five to: only a look.
+  const previous = { ...beginVisit(d, 'a', T0).open.a!, last: T0 + 2 * 3_600_000 + 55 * 60_000 }
+  expect(receptionKind({ ...d, previous, receptionDay: '2026-11-17' }, T0 + 3 * 3_600_000 + 10 * 60_000, 60)).toBe('look')
 })
 
 test('initiative: the same test red three times, silence after an error, the late hour', async () => {
