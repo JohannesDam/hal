@@ -5,6 +5,7 @@ import { acknowledgement, addressed, keep, remarkFrom, shouldWeigh, tally } from
 import { advance, bandFor, learnedNote, lineFor, NAME_TIMES, OTHER_TIMES } from './learn'
 import type { Learn } from './learn'
 import { initiative, newWatch, noteTest, testKey } from './moments'
+import { parseSeen, sightFacts } from './sight'
 
 const T0 = Date.UTC(2026, 10, 17, 21, 0)
 
@@ -63,6 +64,25 @@ test('/hal learn walks through five names, two sentences, the weighing and the p
   }
   expect(lineFor.result({ ok: true, caught: 5, of: 5 })).toBe('Five of five. I know how you say my name now. Call me.')
   expect(learnedNote({ ok: true, caught: 4, of: 5 }).includes('4 of 5')).toBe(true)
+})
+
+test('sight: a look becomes a few facts, and what changed since the last one', async () => {
+  const clock = (at: number) => (at === T0 ? '21:00' : '21:20')
+  expect(parseSeen('{"t":"blind","why":"no camera"}', T0)).toBeUndefined()
+  expect(parseSeen('not json', T0)).toBeUndefined()
+  const first = parseSeen('{"t":"seen","faces":1,"near":0.2,"side":"centre","light":0.7,"warm":-0.3,"backlit":true}', T0)
+  const second = parseSeen('{"t":"seen","faces":2,"near":0.33,"side":"right","light":0.05,"warm":0.5}', T0 + 20 * 60_000)
+  expect(sightFacts(first, undefined, clock)).toEqual([
+    'Webcam, one look at 21:00 (measured on this machine, nothing kept): one face, at arm’s length; bright cool daylight; a bright window or lamp behind the guest.',
+  ])
+  expect(sightFacts(second, first, clock)).toEqual([
+    'Webcam, one look at 21:20 (measured on this machine, nothing kept): 2 faces: someone else is there with the guest; the room is dark; only the screen lights the guest.',
+    'At 21:00 the guest was alone.',
+    'The room was brighter at 21:00.',
+    'The guest sits closer to the screen than at 21:00.',
+  ])
+  const empty = parseSeen('{"t":"seen","faces":0,"light":0.4,"warm":0}', T0 + 40 * 60_000)
+  expect(sightFacts(empty, second, () => '21:20')[1]).toBe('At 21:20 the guest was still at the desk.')
 })
 
 test('the transcript keeps five minutes, nothing older', async () => {

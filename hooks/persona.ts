@@ -9,6 +9,7 @@ export const DEFAULTS: HalSettings = {
   name: '',
   listen: true,
   mic: '',
+  see: false,
 }
 
 const TALK_VALUES: readonly HalTalk[] = ['often', 'sometimes', 'rarely', 'never']
@@ -29,6 +30,7 @@ export function migrate(stored: unknown): HalSettings {
     name: typeof raw.name === 'string' ? raw.name : '',
     listen: typeof raw.listen === 'boolean' ? raw.listen : DEFAULTS.listen,
     mic: typeof raw.mic === 'string' ? raw.mic : '',
+    see: raw.see === true,
   }
 }
 
@@ -250,6 +252,7 @@ export type HalAction =
   | { kind: 'deaf' }
   | { kind: 'mic'; value: string }
   | { kind: 'check' }
+  | { kind: 'see'; value: boolean }
   | { kind: 'learn' }
   | { kind: 'learn-stop' }
   | { kind: 'forget' }
@@ -314,6 +317,12 @@ export function parseCommand(args: string): HalAction {
       return { kind: 'mic', value: lowered === 'auto' ? '' : value }
     case 'check':
       return { kind: 'check' }
+    case 'see':
+      if (lowered === 'on' || lowered === 'off') {
+        return { kind: 'see', value: lowered === 'on' }
+      }
+
+      return { kind: 'bad', why: 'See is on or off: /hal see on lets HAL look through the webcam now and then.' }
     case 'learn':
       if (lowered === 'stop' || lowered === 'cancel') {
         return { kind: 'learn-stop' }
@@ -364,6 +373,7 @@ export function describe(s: HalSettings, level: HalLevel): string {
     `  haze      ${s.haze ? 'on' : 'off'}   (red haze with the eye over the screen at real moments, at most four an hour)`,
     `  pane      ${s.pane ? 'on' : 'off'}   (the large eye beside the chat)`,
     `  listen    ${s.listen ? 'on' : 'off (deaf)'}   (the microphone ${s.mic ? `"${s.mic}"` : '(picked: a built-in one first)'} and what the computer plays; recognised on this machine)`,
+    `  see       ${s.see ? 'on' : 'off'}   (now and then one look through the webcam, measured on this machine; the picture is never kept)`,
     `  name      ${s.name || '(unknown)'}`,
   ].join('\n')
 }
@@ -381,6 +391,7 @@ export const HELP = `/hal                      wake HAL, or put him to sleep
 /hal listen               HAL listens along (also during a call, until it ends)
 /hal deaf                 HAL stops listening: both inputs close
 /hal mic <name>|auto      which microphone HAL listens to
+/hal see on|off           HAL looks through the webcam now and then (seen on this machine, nothing kept)
 /hal learn                HAL learns how you say his name: a short spoken walk-through
 /hal forget               HAL forgets how you say his name
 /hal check               which voice, ears and screens HAL uses, and how fast he answers`

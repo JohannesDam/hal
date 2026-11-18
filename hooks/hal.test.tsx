@@ -27,6 +27,10 @@ function engine(
   on('turn.complete', (_: unknown, e: any) => ({ text: e.answer }))
   on('process.run', (_: unknown, e: any) => {
     const argv: string[] = e.argv
+    // The stand-in webcam: one face, close, warm lamp light.
+    if (String(argv[3] ?? '').endsWith('hal-sight.py')) {
+      return { value: { exitCode: 0, stdout: '{"t":"seen","faces":1,"near":0.32,"side":"left","light":0.2,"warm":0.6,"backlit":false,"camera":0}\n', stderr: '' } }
+    }
     const stdout =
       argv[0] === 'git' && argv[1] === 'status' ? '## main...origin/main\n M src/parser.ts\n?? notes.txt\n' : argv[0] === 'git' ? 'Sam Tester\n' : '60\n'
 
@@ -112,6 +116,26 @@ test('/hal learn: he leads the way by voice, the ears count, and he answers his 
 
   const help = await $.command.run({ command: 'hal', args: 'help' })
   expect(String(help.text)).toContain('How to call HAL')
+})
+
+test('/hal see: off by default; on, one look becomes plain facts, never a picture', async ($: any, on: any) => {
+  const sent: Record<string, unknown>[] = []
+  engine(on, sent)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: false })
+  await $.command.run({ command: 'hal', args: 'on' })
+  await settle()
+  const before = await $.prompt.submit({ text: 'first' })
+  expect((before.context ?? []).join('\n')).not.toContain('Webcam')
+
+  const on1 = await $.command.run({ command: 'hal', args: 'see on' })
+  expect(String(on1.text)).toContain('The camera light shows each time')
+  expect(String(on1.text)).toContain('one face, very close to the screen, to the left of the screen; dim warm lamp light')
+  const after = await $.prompt.submit({ text: 'second' })
+  expect((after.context ?? []).join('\n')).toContain('Webcam, one look at')
+
+  await $.command.run({ command: 'hal', args: 'see off' })
+  const off = await $.prompt.submit({ text: 'third' })
+  expect((off.context ?? []).join('\n')).not.toContain('Webcam, one look at')
 })
 
 test('the character is sent whole, then as a note, and whole again after /clear', async ($: any, on: any) => {

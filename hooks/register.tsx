@@ -9,6 +9,7 @@ import {
   endVisit,
   factBlock,
   localDay,
+  localTime,
   parseGit,
   readDossier,
   receptionKind,
@@ -18,6 +19,8 @@ import { acknowledgement, addressed, ATTEND_MS, hearsName, isSalient, keep, rema
 import type { Heard, HeardTally, ReflectState, Source } from './ears'
 import { advance, bandFor, HOW_TO_CALL, LEARN_INTRO, learnedNote, lineFor, PRACTICE_MS, STEP_TIMEOUT_MS } from './learn'
 import type { Learn, Learned } from './learn'
+import { LOOK_EVERY_MS, parseSeen, sightFacts } from './sight'
+import type { Seen } from './sight'
 import { bandCells, eyeCells } from './eye'
 import { lookFrom, newGazeState, stepGazeState, toolKind } from './gaze'
 import type { Attention, ToolKind } from './gaze'
@@ -110,6 +113,11 @@ let lastAck: string | undefined
 /** /hal learn in progress (learn.ts); undefined otherwise. */
 let learning: Learn | undefined
 let learnSerial = 0
+// /hal see (sight.ts): the last two looks, as numbers. Only in this module's memory.
+let seen: Seen | undefined
+let seenBefore: Seen | undefined
+let lastLookAt = -Infinity
+let isLooking = false
 let saidSerial = 0
 /** The prompt HAL is about to send for you, as you spoke it. */
 let spokenPrompt: string | undefined
@@ -317,6 +325,7 @@ async function onHostLine($: $, line: string): Promise<'busy' | undefined> {
       if (typeof message.pid === 'number') {
         isHostOwner = true
         await askEars($, await read($, settingsAtom), false)
+        void lookIfDue($, true).catch(() => undefined)
         if (pendingReception) {
           const kind = pendingReception
           pendingReception = undefined
@@ -612,6 +621,7 @@ async function facts($: $, level: HalLevel): Promise<string[]> {
 
   return [
     ...block,
+    ...sightFacts(seen, seenBefore, at => localTime(at, utcOffsetMinutes ?? 0)),
     `HAL's mood: level ${level}.`,
     ...(room + computer > 0 ? [`Speech in the last five minutes: ${Math.round(room)} s in the room, ${Math.round(computer)} s from the computer.`] : []),
   ]
@@ -770,7 +780,50 @@ async function checkInitiative($: $) {
 
 function startWatch($: $) {
   if (!watchTimer) {
-    watchTimer = $.clock.every(60_000, () => void checkInitiative($).catch(() => undefined))
+    watchTimer = $.clock.every(60_000, () => {
+      void checkInitiative($).catch(() => undefined)
+      void lookIfDue($).catch(() => undefined)
+    })
+  }
+}
+
+/**
+ * One look through the webcam (/hal see on): only the session that owns HAL's process, never
+ * during a call (the camera may be in it), at most every twenty minutes, and only while the
+ * guest was active in the last ten. `force`: now, as when /hal see on or HAL wakes.
+ */
+async function lookIfDue($: $, force = false) {
+  const settings = await read($, settingsAtom)
+  const now = await $.clock.now()
+  if (!settings.isOn || !settings.see || !isHostOwner || isLooking || desk.micBusy) {
+    return
+  }
+  if (!force && (now - lastLookAt < LOOK_EVERY_MS || now - watch.lastActivityAt > 10 * 60_000)) {
+    return
+  }
+  isLooking = true
+  lastLookAt = now
+  try {
+    const local = (await $.env.get('LOCALAPPDATA')) ?? `${(await $.env.get('USERPROFILE')) ?? 'C:'}\\AppData\\Local`
+    const { stdout } = await $.process.run(
+      [`${local}\\hal\\venv\\Scripts\\python.exe`, '-E', '-s', `${$.plugin.root}\\assets\\hal-sight.py`],
+      { timeoutMs: 15_000 },
+    )
+    const look = parseSeen(stdout.trim().split(/\r?\n/).at(-1) ?? '', now)
+    if (!look) {
+      $.ui.log(`hal: the webcam gave nothing (${stdout.trim().slice(0, 120)})`, { to: 'debug' })
+
+      return
+    }
+    seenBefore = seen
+    seen = look
+    if (look.faces > 0) {
+      lookAtYou(2000)
+    }
+  } catch (error) {
+    $.ui.log(`hal: the webcam look failed: ${String(error)}`, { to: 'debug' })
+  } finally {
+    isLooking = false
   }
 }
 
@@ -1174,7 +1227,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'hal',
       description: 'HAL: wake or quiet the character; ceiling, talk, haze, eye, name, learn, check',
-      argumentHint: '[on|off|ceiling 1-3|talk often|sometimes|rarely|never|haze on|off|eye on|off|name|say|learn|forget|check|help]',
+      argumentHint: '[on|off|ceiling 1-3|talk often|sometimes|rarely|never|haze on|off|eye on|off|name|say|see on|off|learn|forget|check|help]',
     })
     isNameUsed = false
     isDetailUsed = false
@@ -1238,6 +1291,33 @@ export const register: Register = on => {
     switch (action.kind) {
       case 'help':
         return { text: `${HELP}\n\n${HOW_TO_CALL}` }
+      case 'see': {
+        await save($, { ...current, see: action.value })
+        if (!action.value) {
+          seen = undefined
+          seenBefore = undefined
+
+          return { text: 'HAL no longer looks. What he saw is forgotten; the webcam stays closed.' }
+        }
+        if (!current.isOn) {
+          return { text: 'HAL will look once he is awake (/hal).' }
+        }
+        await ensureHost($)
+        await lookIfDue($, true)
+        const what = seen ? sightFacts(seen, undefined, at => localTime(at, utcOffsetMinutes ?? 0))[0] : undefined
+
+        return {
+          text: [
+            '◉ HAL looks now and then: one look through the webcam when he wakes, then at most every twenty minutes while you work.',
+            'The camera light shows each time. The picture is measured on this machine (faces, how close, the light) and thrown away; only those numbers reach the chat. Never during a call. /hal see off ends it.',
+            '',
+            what ? `First look: ${what.replace(/^Webcam, one look at [0-9:]+ \(measured on this machine, nothing kept\): /, '')}` : 'The first look gave nothing: no camera, or another app holds it. /hal check says more.',
+          ].join('\n'),
+          context: [
+            'The guest switched on /hal see: HAL now looks through the webcam now and then. The webcam facts in his notes are measurements made on this machine; name at most one of them, as a plain fact, never more than the notes say.',
+          ],
+        }
+      }
       case 'learn': {
         if (!current.isOn) {
           return { text: 'HAL learns once he is awake (/hal).' }
@@ -1369,8 +1449,15 @@ export const register: Register = on => {
               : `HAL listens to the microphone ${next.mic ? `"${next.mic}"` : 'he picks himself (a built-in one first)'}.`,
         }
       }
-      case 'check':
-        return { text: describeCheck(await askHost($), isHostOwner) }
+      case 'check': {
+        const sight = !current.see
+          ? 'off (/hal see on)'
+          : seen
+            ? `on; last look at ${localTime(seen.at, utcOffsetMinutes ?? 0)}: ${seen.faces} face${seen.faces === 1 ? '' : 's'}, light ${seen.light.toFixed(2)}`
+            : 'on; no look yet, or the webcam gave nothing (needs tools\\setup-voice.ps1 and a free camera)'
+
+        return { text: `${describeCheck(await askHost($), isHostOwner)}\n  sight           ${sight}` }
+      }
     }
   })
 

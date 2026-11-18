@@ -13,6 +13,8 @@ export type HalSettings = {
   listen: boolean
   /** Part of the microphone's name; empty picks one (a built-in microphone first). */
   mic: string
+  /** HAL looks through the webcam now and then (/hal see on); off unless the guest asks. */
+  see: boolean
 }
 export type HalMood = 'idle' | 'working' | 'speaking'
 

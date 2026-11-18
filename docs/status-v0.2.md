@@ -113,9 +113,15 @@ Also fixed: `/hal off` in one session now stops HAL's process whoever owns it, a
 - [ ] Repeat the listening test on laptop speakers (`tools/listening_test.py`).
 - [ ] *Success* on day 7: HAL still on, haze not switched off, no two spoken lines remembered word for word. The dossier (Esc, haze off, `/hal off`) shows honestly whether it annoys.
 
-### Step 10: HAL sees (planned, owner decision 2026-11-18)
+### Step 10: HAL sees (built; live test open; owner decision 2026-11-18)
 
-The best experience is with a webcam and a microphone. `/hal see on`, off by default: now and then one frame from the webcam (never video, never on disk) goes to the model for a few plain facts about the room (the light, the time of day it suggests, what is behind the guest, whether they are alone), which HAL may name like any other fact. The camera light shows; HAL does not hide it. Other people are only ever "someone else". The README says plainly that the frame leaves the machine.
+The best experience is with a webcam and a microphone.
+
+- [x] `/hal see on|off`, off by default. One look when HAL's process is this session's (on waking) and when switched on, then at most every 20 minutes while the guest was active in the last 10; only the session that owns the process looks; never during a call.
+- [x] `assets/hal-sight.py`: OpenCV (headless) opens the camera for about a second, lets the exposure settle, measures the last frame and releases the camera. YuNet (score ≥ 0.8) counts faces; the nearest face's width gives the distance, its centre the side (mirrored, as the guest sees it); mean brightness, red against blue for lamp light or daylight, and backlight. Only JSON numbers leave the process; the frame is never on disk.
+- [x] `hooks/sight.ts`: the last two looks become facts in the fact block ("one face, very close to the screen; dim warm lamp light"), plus what changed ("At 21:00 the guest was alone", "The room was brighter at 21:00"). Other people are only "someone else". `/hal check` shows the last look.
+- *Deviation:* the plan sent the frame to the model. `$.model.complete` takes text only in this build, and seeing locally keeps every pixel on the machine, as the ears keep every sound.
+- [ ] *Live test* with the camera: is "close", "left" and "lamp light" right on the laptop's camera? Is a second face found at a desk?
 
 ### Smaller leftovers
 

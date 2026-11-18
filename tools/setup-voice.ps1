@@ -4,12 +4,13 @@
 # soundcard. Everything goes to %LOCALAPPDATA%\hal, nothing into the repository. Needs Python
 # 3.10 or newer. Safe to run again: it skips what is there and checks every file's SHA-256.
 #
-#   powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup-voice.ps1 [-NoEars] [-Kokoro]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup-voice.ps1 [-NoEars] [-NoSight] [-Kokoro]
 #
 # -NoEars leaves the speech models out: HAL speaks but cannot listen along.
+# -NoSight leaves out OpenCV and the face model (YuNet, about 230 KB): /hal see then finds no eyes.
 # -Kokoro also fetches the Kokoro model (about 350 MB): the earlier voice am_michael, used by
 # tools\listening_test.py and as HAL's voice when kestrin is missing.
-param([switch]$NoEars, [switch]$Kokoro)
+param([switch]$NoEars, [switch]$NoSight, [switch]$Kokoro)
 $ErrorActionPreference = 'Stop'
 
 $hal = Join-Path $env:LOCALAPPDATA 'hal'
@@ -35,6 +36,10 @@ $earsFiles = @(
   @{ dir = 'whisper-small'; name = 'small-tokens.txt'; sha = 'b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126'
      url = 'https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-tokens.txt' }
 )
+
+# The sight (/hal see): OpenCV's YuNet face detector from the opencv_zoo repository.
+$sightFile = @{ dir = 'sight'; name = 'face_detection_yunet_2023mar.onnx'; sha = '8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4'
+  url = 'https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx' }
 
 $kokoroDir = Join-Path $hal 'models\kokoro'
 $kokoroModel = Join-Path $kokoroDir 'kokoro-multi-lang-v1_0\model.onnx'
@@ -79,6 +84,10 @@ if (-not $NoEars) {
   }
 }
 
+if (-not $NoSight) {
+  Get-Checked 'Sight' (Join-Path $hal "models\$($sightFile.dir)") $sightFile.name $sightFile.url $sightFile.sha
+}
+
 if ($Kokoro) {
   New-Item -ItemType Directory -Force -Path $kokoroDir | Out-Null
   if (Test-Path -LiteralPath $kokoroModel) {
@@ -110,6 +119,13 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
 Write-Host 'Python environment: installing piper-tts, sherpa-onnx, soundcard and numpy...'
 & $venvPython -m pip install --quiet --disable-pip-version-check 'piper-tts==1.8.0' 'sherpa-onnx==2.0.1' 'soundcard==0.4.6' numpy
 if ($LASTEXITCODE -ne 0) { throw 'Installing the Python packages failed.' }
+if (-not $NoSight) {
+  # OpenCV without its GUI parts: one webcam frame, measured and dropped (assets\hal-sight.py).
+  # 4.12 wants numpy below 2.3; pip settles that, and piper-tts and sherpa-onnx accept it.
+  Write-Host 'Python environment: installing opencv-python-headless for /hal see...'
+  & $venvPython -m pip install --quiet --disable-pip-version-check 'opencv-python-headless==4.12.0.88'
+  if ($LASTEXITCODE -ne 0) { throw 'Installing OpenCV failed.' }
+}
 # No double quotes in the code: Windows PowerShell drops them on the way to a native program.
 & $venvPython -I -c 'import piper, sherpa_onnx, soundcard; print(''piper-tts and soundcard ready, sherpa-onnx'', sherpa_onnx.__version__)'
 if ($LASTEXITCODE -ne 0) { throw 'The Python packages do not load.' }
